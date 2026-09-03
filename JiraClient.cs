@@ -342,6 +342,8 @@ public class JiraClient
         }
     }
 
+    // TODO: not called from anywhere yet. Kept for looking at how an issue reached its
+    // current state, e.g. when a status moved or an estimate was revised.
     public async Task<ChangeLogResponse> DownloadIssueHistoryAsync(string issueKey, int startAt = 0, int maxResults = 100)
     {
         var url = $"{_settings.BaseApiUrl}/issue/{issueKey}?expand=changelog&fields=none";

@@ -60,6 +60,16 @@ class Program
                     Constants.ExcelReportFileName, settings.Email.AutodiscoverAddress);
                 break;
 
+            case "customfieldextractor":
+                if (args.Length < 2)
+                {
+                    Console.WriteLine("Usage: dotnet run -- customfieldextractor <field>");
+                    Console.WriteLine("  <field> is a logical name from Jira.Fields, or a raw field id.");
+                    break;
+                }
+                await ExtractCustomFieldValues(loggerFactory, settings, args[1]);
+                break;
+
             case "checkforupdates":
                 logger.LogInformation("Running: check for updates in Jira and send email if there are changes");
                 await CheckForUpdatesAndNotify(loggerFactory, settings);
@@ -72,10 +82,25 @@ class Program
                 Console.WriteLine("  report            Generate HTML report from previously saved data");
                 Console.WriteLine("  all               Fetch data from Jira, generate report, and send email");
                 Console.WriteLine("  checkforupdates   Report what changed since the last fetch and email the differences");
+                Console.WriteLine("  customfieldextractor <field>");
+                Console.WriteLine("                    List the distinct values a field takes across the project query");
                 break;
         }
 
         Log.CloseAndFlush();
+    }
+
+    // Reads one field across the project query, for working out what it holds.
+    private static async Task ExtractCustomFieldValues(ILoggerFactory loggerFactory, AppSettings settings, string field)
+    {
+        var extractor = new JiraCustomFieldExtractor(loggerFactory.CreateLogger<JiraCustomFieldExtractor>(), settings.Jira);
+        var values = await extractor.GetDistinctValuesAsync(settings.Jira.ProjectQuery, field);
+
+        Console.WriteLine($"{values.Count} distinct value(s) for '{field}':");
+        foreach (var value in values.OrderBy(v => v, StringComparer.Ordinal))
+        {
+            Console.WriteLine($"  {value}");
+        }
     }
 
     private static async Task CheckForUpdatesAndNotify(ILoggerFactory loggerFactory, AppSettings settings)

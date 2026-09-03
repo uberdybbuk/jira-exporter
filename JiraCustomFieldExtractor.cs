@@ -1,66 +1,81 @@
-using System;
-using System.Collections.Generic;
-using System.Net.Http;
-using System.Net.Http.Headers;
 using System.Text;
-using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 using Newtonsoft.Json.Linq;
+using System.Net.Http.Headers;
 
 namespace FourArc.JiraExporter;
 
+// Lists the distinct values a single field takes across the issues a query returns.
+// Used when working out what a custom field actually holds before wiring it into
+// JiraIssue, so it reads one field at a time rather than the whole issue.
 public class JiraCustomFieldExtractor
 {
-    private readonly HttpClient _client;
-    private readonly string _baseSearchUrl;
     private const int PageSize = 500;
 
-    public JiraCustomFieldExtractor(string baseApiUrl, string username, string password)
+    private readonly ILogger<JiraCustomFieldExtractor> _logger;
+    private readonly JiraSettings _settings;
+    private readonly HttpClient _client;
+
+    public JiraCustomFieldExtractor(ILogger<JiraCustomFieldExtractor> logger, JiraSettings settings)
     {
-        _baseSearchUrl = baseApiUrl.TrimEnd('/') + "/search";
-        _client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-        var authToken = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{username}:{password}"));
+        _logger = logger;
+        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
+
+        _client = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var authToken = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{settings.Username}:{settings.Password}"));
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authToken);
     }
 
-    public async Task<HashSet<string>> GetDistinctCustomFieldValuesAsync(string jql, string customFieldId)
+    // The field may be given as a logical name from settings or as a raw Jira field id.
+    public async Task<HashSet<string>> GetDistinctValuesAsync(string jql, string field)
     {
+        var fieldId = _settings.ResolveField(field);
+        _logger.LogInformation("Reading distinct values of {Field} (resolved to {FieldId}) for JQL: {Jql}", field, fieldId, jql);
+
+        var searchUrl = _settings.BaseApiUrl.TrimEnd('/') + "/search";
+        var result = new HashSet<string>(StringComparer.Ordinal);
         int startAt = 0;
         int total = 0;
-        var result = new HashSet<string>();
 
         do
         {
-            var url = $"{_baseSearchUrl}?jql={Uri.EscapeDataString(jql)}&startAt={startAt}&maxResults={PageSize}&fields={customFieldId}";
+            var url = $"{searchUrl}?jql={Uri.EscapeDataString(jql)}&startAt={startAt}&maxResults={PageSize}&fields={Uri.EscapeDataString(fieldId)}";
             var response = await _client.GetAsync(url);
 
             if (!response.IsSuccessStatusCode)
             {
-                Console.WriteLine($"[ERR] API call failed: {response.StatusCode}");
+                _logger.LogError("API call failed: {StatusCode} for {Url}", response.StatusCode, url);
                 break;
             }
 
-            var content = await response.Content.ReadAsStringAsync();
-            var json = JObject.Parse(content);
+            var json = JObject.Parse(await response.Content.ReadAsStringAsync());
             total = json.Value<int>("total");
 
-            var issues = json["issues"];
+            if (json["issues"] is not JArray issues)
+            {
+                _logger.LogWarning("No 'issues' array in the response for {Jql}", jql);
+                break;
+            }
+
             foreach (var issue in issues)
             {
-                var field = issue["fields"]?[customFieldId];
+                var value = issue["fields"]?[fieldId];
 
-                if (field is JArray arr)
+                if (value is JArray array)
                 {
-                    foreach (var item in arr)
-                        result.Add(item?.ToString());
+                    foreach (var item in array)
+                    {
+                        result.Add(item?.ToString() ?? "");
+                    }
                 }
-                else if (field != null)
+                else if (value is not null && value.Type != JTokenType.Null)
                 {
-                    result.Add(field.ToString());
+                    result.Add(value.ToString());
                 }
             }
 
             startAt += PageSize;
-            Console.WriteLine($"[INFO] Retrieved {result.Count} unique values so far...");
+            _logger.LogInformation("{Count} distinct value(s) so far, {StartAt}/{Total} issues read.", result.Count, Math.Min(startAt, total), total);
 
         } while (startAt < total);
 
