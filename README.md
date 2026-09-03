@@ -12,7 +12,6 @@ Create `appsettings.local.json` in the project directory. The file is gitignored
         "Username": "user@example.com",
         "Password": "...",
         "ProjectQuery": "type in ('<scoping-issue-type>') AND Team = <team>",
-        "SupportQuery": "project = <key> AND resolution = Unresolved",
         "Fields": {
             "estimation": "customfield_XXXXX",
             "prodDate": "customfield_XXXXX"
@@ -27,7 +26,7 @@ Create `appsettings.local.json` in the project directory. The file is gitignored
 
 Settings are read in order: template, then the local file, then environment
 variables — `JIRA_USERNAME`, `JIRA_PASSWORD`, `JIRA_BASE_API_URL`,
-`JIRA_PROJECT_QUERY`, `JIRA_SUPPORT_QUERY`, `EMAIL_AUTODISCOVER_ADDRESS`,
+`JIRA_PROJECT_QUERY`, `EMAIL_AUTODISCOVER_ADDRESS`,
 `EMAIL_REPORT_RECIPIENT`. If a required setting is missing the program says which
 one and exits.
 
@@ -44,7 +43,32 @@ dotnet run -- fetch
 | `fetch` | Reads issues from Jira and writes them to `data/` |
 | `report` | Builds Excel and JSON reports from previously fetched data |
 | `all` | `fetch`, then `report`, then emails the report |
-| `checkforupdates` | Reports which issues changed since the last fetch |
+| `checkforupdates` | Emails what changed since the last snapshot |
+
+`fetch` and `report` run anywhere. `all` and `checkforupdates` send mail through
+Exchange Web Services as the signed-in Windows account, and autodiscover resolves
+the server through a Windows system library, so those two need Windows.
+
+## Change tracking
+
+`fetch` reads every work package the query matches and writes the snapshot.
+`checkforupdates` is the one meant to run on a schedule: it reports the difference
+against that snapshot instead of re-reading everything.
+
+A run makes two searches — the scoping query, and one `key in (...)` batch for the
+project issues — and then fetches in full only the work packages whose `updated`
+timestamp actually moved. New and removed work packages fall out of the same
+comparison, so a newly created scoping issue is reported rather than missed.
+
+The differences go out as an HTML table in the mail body, with no attachment. The
+snapshot is rewritten only after the mail has been sent, so a failed send leaves
+the same changes to be reported on the next run rather than losing them.
+
+Compared fields are the report's own columns, minus the ones that carry no signal:
+identity (`ProjectKey`, `Proposal Scoping Task`), timestamps that always move
+(`Created`, `Updated`), `Latest Date` (derived from the phase dates it would
+duplicate), `Summary`, and `Error Message`. That leaves status, resolution, both
+assignees, issue type, estimate, budget and the sixteen phase dates.
 
 ## Field mapping
 

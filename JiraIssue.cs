@@ -116,12 +116,6 @@ public class JiraIssue(string key)
     [JiraFieldInfo("prodDate")]
     public DateOnly? ProdDate { get; set; }
 
-    [JiraFieldInfo("relatedSla")]
-    public string RelatedSLA { get; set; }
-
-    [JiraFieldInfo("timeToSla")]
-    public string TimeToSLA { get; set; }
-
     public HashSet<string> InwardLinkedIssueKeys { get; } = [];
 
     // Logical field names of every property carrying JiraFieldInfo. Translating them to

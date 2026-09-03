@@ -72,8 +72,8 @@ public static class ReportColumns
         new ("project-key", "ProjectKey", item => item.ProjectTask?.Key ),
         new ("created", "Created", item => item.ProjectTask?.Created ),
         new ("updated", "Updated", item => item.ProjectTask?.Updated ),
-        new ("assignee", "Assignee", item => item.ProjectTask?.AssigneeDisplayName, TrimAfterDash ), // proje taskının o anda kime atandığı
-        new ("ps-assignee", "Proposal Scoping Assignee", item => item.ProposalScopingTask?.AssigneeDisplayName, TrimAfterDash ), // proposal scoping taskını kim halletmiş
+        new ("assignee", "Assignee", item => item.ProjectTask?.AssigneeDisplayName, TrimAfterDash ), // who the project task is currently assigned to
+        new ("ps-assignee", "Proposal Scoping Assignee", item => item.ProposalScopingTask?.AssigneeDisplayName, TrimAfterDash ), // who did the proposal scoping
         new ("issue-type", "Issue Type", item => item.ProjectTask?.IssueType ),
         new ("status", "Status", item => item.ProjectTask?.Status ),
         new ("resolution", "Resolution", item => item.ProjectTask?.Resolution ),

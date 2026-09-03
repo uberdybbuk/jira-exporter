@@ -1,27 +1,26 @@
-# Kimlik bilgileri ve yerel ayarlar — asla sürüm kontrolüne girmez
+# Credentials and local settings - never under version control
 appsettings.local.json
 appsettings.*.local.json
 *.secrets.json
 .env
 .env.*
 
-# Jira şema dökümleri — uygulamanın çalışması için gerekli değil, kuruma özgü
-# yapı taşıdığı için sürüm kontrolüne alınmıyor. Yerelde durmaya devam eder.
+# Jira schema dumps - not needed to run the tool, and specific to one
+# installation. They stay on disk locally.
 sample-data/
 jira-api-sample-responses/
 
-# Jira'dan çekilen veriler ve üretilen raporlar
+# Data fetched from Jira and the reports built from it
 data/
 *.xlsx
-support-sla.csv
 
-# Günlükler
+# Logs
 log*.log
 logs/
 
-# Derleme çıktıları
+# Build output
 bin/
 obj/
 
-# Sistem
+# System
 .DS_Store

@@ -119,7 +119,7 @@ public class JiraClient
             {
                 if (value.Type == JTokenType.Null)
                 {
-                    return ""; // madem null subprop olamaz
+                    return ""; // a null value has no sub-property to read
                 }
 
                 if (value.Type == JTokenType.Object)
@@ -127,7 +127,7 @@ public class JiraClient
                     return value[subPropertyName]?.ToString() ?? "";
                 }
 
-                throw new Exception($"Key={issue.Key} Property={propertyName} SubProperty={subPropertyName} ne Null ne de Object, tipi = {value.Type}");
+                throw new Exception($"Key={issue.Key} Property={propertyName} SubProperty={subPropertyName} is neither null nor an object; type = {value.Type}");
             }
 
             if (value.Type == JTokenType.Array)
@@ -162,7 +162,7 @@ public class JiraClient
                 {
                     pi.SetValue(issue, DateTime.Parse(value));
                 }
-                else if (pi.PropertyType == typeof(DateOnly?)) // kolaya kaçtım, tüm tipleri handle etmeyeceğim
+                else if (pi.PropertyType == typeof(DateOnly?)) // only the types actually used are handled
                 {
                     if (string.IsNullOrEmpty(value))
                     {
@@ -186,7 +186,7 @@ public class JiraClient
                 }
                 else if (pi.PropertyType == typeof(decimal?))
                 {
-                    if (string.IsNullOrEmpty(value)) // null veya boş string ise null olarak set et
+                    if (string.IsNullOrEmpty(value)) // treat an empty string as null
                     {
                         pi.SetValue(issue, null);
                     }
@@ -309,7 +309,7 @@ public class JiraClient
     }
 
     // Returns null when the issue has no fields, which is how a missing issue shows up here.
-    public async Task<JiraIssue> GetIssue(string issueKey, string[] customFieldsToInclude = null)
+    public async Task<JiraIssue> GetIssue(string issueKey, string[] customFieldsToInclude = null, bool useCache = true)
     {
         _logger.LogInformation("Fetching issue: {IssueKey} ...", issueKey);
 
@@ -319,7 +319,8 @@ public class JiraClient
                 new
                 {
                     fields = GetJiraIssueFields(customFieldsToInclude) + ",issuelinks"
-                });
+                },
+                useCache: useCache);
 
             var fields = json["fields"];
             if (fields == null)
@@ -346,7 +347,7 @@ public class JiraClient
         var url = $"{_settings.BaseApiUrl}/issue/{issueKey}?expand=changelog&fields=none";
         _logger.LogInformation("Downloading changelog for issue {IssueKey} from URL: {Url}", issueKey, url);
 
-        using var _httpClient = CreateHttpClientWithAuthHeaders(30); // 30 saniye timeout
+        using var _httpClient = CreateHttpClientWithAuthHeaders(30);
         using var response = await _httpClient.GetAsync(url);
         response.EnsureSuccessStatusCode();
 
@@ -395,7 +396,9 @@ public class JiraClient
         public string From { get; set; }
         public string FromString { get; set; }
         public string To { get; set; }
-        public string ToString { get; set; }
+
+        [JsonPropertyName("toString")]
+        public string ToStringValue { get; set; }
     }
 
     public sealed class JiraUser

@@ -1,6 +1,4 @@
 using Microsoft.Extensions.Logging;
-using System.Collections;
-using System.Reflection;
 
 namespace FourArc.JiraExporter;
 
@@ -131,139 +129,243 @@ public class JiraExporter
         return proposalScopingIssues;
     }
 
-    internal async Task<List<WorkPackage>> CheckForUpdatesAsync()
+    // Tracked fields are the report's own columns, minus identity, the timestamps
+    // that always move, and values derived from other columns.
+    private static readonly HashSet<string> s_untrackedColumnIds = new(StringComparer.Ordinal)
     {
-        List<WorkPackage> results = [];
+        "project-key", "ps-task", "created", "updated", "latest-date", "error-message", "summary"
+    };
 
-        // Load what the previous run saw.
+    private static readonly ReportColumnConfig[] s_trackedColumns =
+        ReportColumns.All.Where(c => !s_untrackedColumnIds.Contains(c.Id)).ToArray();
+
+    // Asks Jira what changed instead of re-reading everything: one search lists the
+    // work packages that exist now, a second reads their project issues' update
+    // timestamps, and only the ones that actually moved are fetched in full.
+    public async Task<ChangeReport> CheckForUpdatesAsync()
+    {
+        var report = new ChangeReport();
+
         if (!File.Exists(Constants.ProjectTasksFileName))
         {
-            _logger.LogWarning("Project tasks file not found at {FilePath}. Run 'fetch' first to create this file.", Constants.ProjectTasksFileName);
-            return results;
+            _logger.LogError("Snapshot '{FilePath}' not found. Run 'fetch' first to create it.", Constants.ProjectTasksFileName);
+            return report;
         }
 
-        var existingProjectTasks = JsonHelper.FromJson<List<WorkPackage>>(Constants.ProjectTasksFileName);
-        _logger.LogInformation("Loaded {Count} project tasks from {FilePath}", existingProjectTasks.Count, Constants.ProjectTasksFileName);
+        var snapshot = JsonHelper.FromJson<List<WorkPackage>>(Constants.ProjectTasksFileName);
 
-        HashSet<string> uniqueProjectKeys = existingProjectTasks.Select(pt => pt.ProjectTask.Key).ToHashSet();
+        // Keyed by work package rather than by project: one project can have several
+        // scoping issues, and each carries its own estimate and budget.
+        var previous = snapshot
+            .Where(wp => wp.ProjectTask is not null && wp.ProposalScopingTask is not null)
+            .ToDictionary(wp => wp.UniqueId, StringComparer.Ordinal);
+        _logger.LogInformation("Loaded {Count} work packages from {FilePath}", previous.Count, Constants.ProjectTasksFileName);
 
-        var jql = $"key in ({string.Join(", ", uniqueProjectKeys)})";
-        List<JiraIssue> projectTaskSummaries = await _jiraClient.Search(jql, timeout: 30);
+        var scopingIssues = await _jiraClient.Search(
+            _settings.ProjectQuery, timeout: 20, customFieldsToInclude: ["estimation", "salesForceBudget"]);
 
-        // An issue that stops coming back has usually become invisible to this account.
-        var allUpdatedProjectKeys = projectTaskSummaries.Select(i => i.Key).ToHashSet();
-        var allMissingProjectKeys = uniqueProjectKeys.Where(k => !allUpdatedProjectKeys.Contains(k)).ToList();
-        if (allMissingProjectKeys.Count > 0)
+        var current = new Dictionary<string, JiraIssue>(StringComparer.Ordinal);
+        foreach (var issue in scopingIssues)
         {
-            // TODO: this should be specially reported
-            _logger.LogWarning("The following project keys were not returned in the search results. This may indicate a visibility change or deletion. Missing project keys: {MissingProjectKeys}", 
-                string.Join(", ", allMissingProjectKeys));
-        }
-
-        // Compare against the previous snapshot.
-        foreach (var updatedProjectTaskSummary in projectTaskSummaries)
-        {
-            var existingProjectTaskGroup = existingProjectTasks.First(pt => pt.ProjectTask.Key == updatedProjectTaskSummary.Key);
-            if(existingProjectTaskGroup.ProjectTask.Updated == updatedProjectTaskSummary.Updated)
+            if (string.IsNullOrEmpty(issue.ParentKey))
             {
-                _logger.LogDebug("No update detected for project {Key}. Updated date is the same as before: {UpdatedDate}", 
-                    updatedProjectTaskSummary.Key, updatedProjectTaskSummary.Updated);
+                _logger.LogWarning("Scoping issue {Key} has no parent, so it cannot form a work package.", issue.Key);
                 continue;
             }
 
-            JiraIssue updatedProjectTask = await LoadProjectTaskAsync(updatedProjectTaskSummary.Key);
-            List<ChangeLogEntry> changes = FindDifferences(existingProjectTaskGroup.ProjectTask, updatedProjectTask);
+            current[$"{issue.ParentKey}_{issue.Key}"] = issue;
+        }
+        _logger.LogInformation("The query returned {Count} work packages.", current.Count);
 
+        foreach (var (uniqueId, workPackage) in previous)
+        {
+            if (!current.ContainsKey(uniqueId))
+            {
+                report.Removed.Add(workPackage);
+            }
+        }
+
+        var projectUpdateTimes = await GetProjectUpdateTimesAsync(
+            current.Values.Select(issue => issue.ParentKey).Distinct().ToList());
+
+        List<string> toRefresh = [];
+        foreach (var (uniqueId, scopingIssue) in current)
+        {
+            if (!previous.TryGetValue(uniqueId, out var before))
+            {
+                toRefresh.Add(uniqueId);
+                continue;
+            }
+
+            if (!projectUpdateTimes.TryGetValue(scopingIssue.ParentKey, out var projectUpdated))
+            {
+                // The scoping issue still matches, but its project issue did not come
+                // back, so there is nothing to compare against.
+                report.Unreadable.Add(before);
+                continue;
+            }
+
+            if (HasMoved(before.ProposalScopingTask.Updated, scopingIssue.Updated) ||
+                HasMoved(before.ProjectTask.Updated, projectUpdated))
+            {
+                toRefresh.Add(uniqueId);
+            }
+        }
+
+        _logger.LogInformation("{Count} work package(s) moved since the last snapshot.", toRefresh.Count);
+
+        // Work packages of the same project share a project issue; fetch each one once.
+        Dictionary<string, JiraIssue> projectTasks = new(StringComparer.Ordinal);
+        var allCustomFields = JiraIssue.GetCustomFields();
+
+        foreach (var uniqueId in toRefresh)
+        {
+            var scopingIssue = current[uniqueId];
+
+            if (!projectTasks.TryGetValue(scopingIssue.ParentKey, out var projectTask))
+            {
+                try
+                {
+                    // Bypass the response cache; a day-old answer would hide the change.
+                    projectTask = await _jiraClient.GetIssue(scopingIssue.ParentKey, allCustomFields, useCache: false);
+                }
+                catch (Exception e)
+                {
+                    _logger.LogError(e, "Failed to fetch project issue {ProjectKey} for {UniqueId}.", scopingIssue.ParentKey, uniqueId);
+                    continue;
+                }
+
+                if (projectTask is null)
+                {
+                    _logger.LogWarning("Project issue {ProjectKey} came back without fields.", scopingIssue.ParentKey);
+                    continue;
+                }
+
+                projectTasks[scopingIssue.ParentKey] = projectTask;
+            }
+
+            var workPackage = new WorkPackage(projectTask, scopingIssue);
+            report.Refreshed.Add(workPackage);
+
+            if (!previous.TryGetValue(uniqueId, out var before))
+            {
+                report.Added.Add(workPackage);
+                continue;
+            }
+
+            var changes = FindDifferences(before, workPackage);
             if (changes.Count == 0)
             {
-                // Updated timestamp moved but nothing we track changed.
-                _logger.LogInformation("No changes detected for project {Key} for the fields we care about.", updatedProjectTask.Key);
+                // The update timestamp moved, but no field we track did.
+                _logger.LogDebug("{UniqueId} was updated, but no tracked field changed.", uniqueId);
                 continue;
             }
-
-            _logger.LogInformation("Detected {ChangeCount} change(s) in project {Key}. Local update: {PreviousUpdate}, Current update: {CurrentUpdate}",
-                changes.Count, updatedProjectTask.Key, existingProjectTaskGroup.ProjectTask.Updated, updatedProjectTask.Updated);
 
             foreach (var change in changes)
             {
-                _logger.LogInformation("Project {Key} changed - {Change}", updatedProjectTask.Key, change);
+                _logger.LogInformation("{UniqueId} changed - {Change}", uniqueId, change);
             }
 
-            results.Add(new WorkPackage(updatedProjectTask, existingProjectTaskGroup.ProposalScopingTask));
+            report.Changed.Add(new ChangedWorkPackage(workPackage, changes));
         }
 
-        return results;
+        report.NextSnapshot = BuildNextSnapshot(previous, current, report);
+        return report;
     }
 
-    private static List<ChangeLogEntry> FindDifferences(JiraIssue existingIssue, JiraIssue updatedIssue)
+    // Written only once the notification has gone out, so a failed send leaves the
+    // same changes to be reported again on the next run.
+    public async Task CommitSnapshotAsync(ChangeReport report)
+    {
+        foreach (var workPackage in report.Refreshed)
+        {
+            await workPackage.SaveAsJsonAsync(Path.Combine(Constants.ProjectInfoDirectory, $"{workPackage.UniqueId}.json"));
+        }
+
+        await report.NextSnapshot.SaveAsJsonAsync(Constants.ProjectTasksFileName);
+        _logger.LogInformation("Snapshot updated: {Count} work packages, {RefreshedCount} of them refreshed.",
+            report.NextSnapshot.Count, report.Refreshed.Count);
+    }
+
+    // Everything the query still returns: refreshed where it was fetched this run,
+    // carried over from the previous snapshot where it was not.
+    private static List<WorkPackage> BuildNextSnapshot(
+        Dictionary<string, WorkPackage> previous,
+        Dictionary<string, JiraIssue> current,
+        ChangeReport report)
+    {
+        var refreshed = report.Refreshed.ToDictionary(wp => wp.UniqueId, StringComparer.Ordinal);
+
+        List<WorkPackage> next = [];
+        foreach (var uniqueId in current.Keys)
+        {
+            if (refreshed.TryGetValue(uniqueId, out var updated))
+            {
+                next.Add(updated);
+            }
+            else if (previous.TryGetValue(uniqueId, out var carried))
+            {
+                next.Add(carried);
+            }
+        }
+
+        return next;
+    }
+
+    // 'key in (...)' with the whole active set would produce an over-long URL, so
+    // the keys go out in batches.
+    private async Task<Dictionary<string, DateTime>> GetProjectUpdateTimesAsync(List<string> projectKeys)
+    {
+        const int BatchSize = 100;
+        Dictionary<string, DateTime> updateTimes = new(StringComparer.Ordinal);
+
+        for (int i = 0; i < projectKeys.Count; i += BatchSize)
+        {
+            var batch = projectKeys.Skip(i).Take(BatchSize);
+            var issues = await _jiraClient.Search($"key in ({string.Join(", ", batch)})", timeout: 30);
+
+            foreach (var issue in issues)
+            {
+                updateTimes[issue.Key] = issue.Updated;
+            }
+        }
+
+        var missingCount = projectKeys.Count - updateTimes.Count;
+        if (missingCount > 0)
+        {
+            _logger.LogWarning("{Count} project issue(s) were not returned by the key search.", missingCount);
+        }
+
+        return updateTimes;
+    }
+
+    // The snapshot's timestamps have been through JSON, so they are compared in one
+    // time zone and at second precision instead of by exact DateTime equality.
+    private static bool HasMoved(DateTime previous, DateTime current) =>
+        previous.ToUniversalTime().Ticks / TimeSpan.TicksPerSecond
+            != current.ToUniversalTime().Ticks / TimeSpan.TicksPerSecond;
+
+    private static List<ChangeLogEntry> FindDifferences(WorkPackage before, WorkPackage after)
     {
         List<ChangeLogEntry> changes = [];
-        PropertyInfo[] properties = typeof(JiraIssue)
-            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.GetIndexParameters().Length == 0)
-            .ToArray();
 
-        foreach (PropertyInfo property in properties)
+        foreach (var column in s_trackedColumns)
         {
-            object existingValue = property.GetValue(existingIssue);
-            object updatedValue = property.GetValue(updatedIssue);
+            var previousValue = Format(column, before);
+            var currentValue = Format(column, after);
 
-            if (AreEqual(existingValue, updatedValue))
+            if (!string.Equals(previousValue, currentValue, StringComparison.Ordinal))
             {
-                continue;
+                changes.Add(new ChangeLogEntry(column.Header, previousValue, currentValue));
             }
-
-            changes.Add(new ChangeLogEntry(
-                property.Name,
-                FormatValue(existingValue),
-                FormatValue(updatedValue)));
         }
 
         return changes;
     }
 
-    private static bool AreEqual(object existingValue, object updatedValue)
+    private static string Format(ReportColumnConfig column, WorkPackage workPackage)
     {
-        if (ReferenceEquals(existingValue, updatedValue))
-        {
-            return true;
-        }
-
-        if (existingValue is null || updatedValue is null)
-        {
-            return false;
-        }
-
-        if (existingValue is IEnumerable existingEnumerable && updatedValue is IEnumerable updatedEnumerable &&
-            existingValue is not string && updatedValue is not string)
-        {
-            string[] existingItems = existingEnumerable.Cast<object>().Select(FormatValue).OrderBy(x => x).ToArray();
-            string[] updatedItems = updatedEnumerable.Cast<object>().Select(FormatValue).OrderBy(x => x).ToArray();
-            return existingItems.SequenceEqual(updatedItems, StringComparer.Ordinal);
-        }
-
-        return Equals(existingValue, updatedValue);
+        var value = column.ValueSelector(workPackage);
+        return value is null ? "" : column.Formatter(value);
     }
-
-    private static string FormatValue(object value)
-    {
-        if (value is null)
-        {
-            return "<null>";
-        }
-
-        return value switch
-        {
-            DateTime dateTime => dateTime.ToString("yyyy-MM-dd HH:mm:ss"),
-            DateTimeOffset dateTimeOffset => dateTimeOffset.ToString("yyyy-MM-dd HH:mm:ss zzz"),
-            DateOnly dateOnly => dateOnly.ToString("yyyy-MM-dd"),
-            IEnumerable enumerable when value is not string => string.Join(", ", enumerable.Cast<object>().Select(FormatValue)),
-            _ => value.ToString() ?? "<null>"
-        };
-    }
-}
-
-public record ChangeLogEntry(string FieldName, string PreviousValue, string CurrentValue)
-{
-    public override string ToString() => $"{FieldName}: '{PreviousValue}' -> '{CurrentValue}'";
 }

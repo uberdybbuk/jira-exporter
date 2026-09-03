@@ -10,7 +10,7 @@ public static class JsonHelper
     {
         WriteIndented = true,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All) // tüm Unicode karakterlerini normal yaz
+        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All) // write Unicode characters as-is instead of escaping them
     };
 
     public static string ToJson(this object obj)

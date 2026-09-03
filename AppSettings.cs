@@ -51,7 +51,6 @@ public class AppSettings
         target.Jira.Username = Pick(source.Jira.Username, target.Jira.Username);
         target.Jira.Password = Pick(source.Jira.Password, target.Jira.Password);
         target.Jira.ProjectQuery = Pick(source.Jira.ProjectQuery, target.Jira.ProjectQuery);
-        target.Jira.SupportQuery = Pick(source.Jira.SupportQuery, target.Jira.SupportQuery);
         target.Email.AutodiscoverAddress = Pick(source.Email.AutodiscoverAddress, target.Email.AutodiscoverAddress);
         target.Email.ReportRecipient = Pick(source.Email.ReportRecipient, target.Email.ReportRecipient);
 
@@ -73,7 +72,6 @@ public class AppSettings
         settings.Jira.Username = Env("JIRA_USERNAME") ?? settings.Jira.Username;
         settings.Jira.Password = Env("JIRA_PASSWORD") ?? settings.Jira.Password;
         settings.Jira.ProjectQuery = Env("JIRA_PROJECT_QUERY") ?? settings.Jira.ProjectQuery;
-        settings.Jira.SupportQuery = Env("JIRA_SUPPORT_QUERY") ?? settings.Jira.SupportQuery;
         settings.Email.AutodiscoverAddress = Env("EMAIL_AUTODISCOVER_ADDRESS") ?? settings.Email.AutodiscoverAddress;
         settings.Email.ReportRecipient = Env("EMAIL_REPORT_RECIPIENT") ?? settings.Email.ReportRecipient;
 
@@ -114,9 +112,6 @@ public class JiraSettings
 
     // JQL selecting the scoping issues to export.
     public string ProjectQuery { get; set; }
-
-    // JQL selecting the support issues for the SLA report.
-    public string SupportQuery { get; set; }
 
     // Logical field name to the real Jira field, e.g. "estimation": "customfield_XXXXX".
     // Custom field IDs differ between installations, so they are configured rather than hardcoded.

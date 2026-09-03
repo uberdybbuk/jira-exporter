@@ -1,23 +1,19 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- <Nullable>enable</Nullable> -->
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Ayar dosyaları çıktı klasörüne kopyalanır; yerel dosya varsa üzerine yazar. -->
+    <!-- Settings are copied to the output folder; the local file overrides the template. -->
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="appsettings.local.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('appsettings.local.json')" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="ClosedXML" Version="0.105.0" />
-    <PackageReference Include="Microsoft.AspNetCore.WebUtilities" Version="9.0.4" />
-    <PackageReference Include="Microsoft.Exchange.WebServices" Version="2.2.0" />
-    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.9" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="9.0.9" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="Serilog" Version="4.3.0" />
@@ -26,6 +22,15 @@
     <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
     <PackageReference Include="Serilog.Enrichers.Thread" Version="4.0.0" />
     <PackageReference Include="Serilog.Enrichers.Environment" Version="3.0.1" />
+
+    <!-- The EWS Managed API targets .NET Framework and has no newer release. It loads
+         and runs on .NET 9, so NU1701 is suppressed for this package only; any other
+         .NET Framework package would still warn. It reaches Exchange through Windows
+         APIs, which is what confines the mail commands to Windows. -->
+    <PackageReference Include="Microsoft.Exchange.WebServices" Version="2.2.0" NoWarn="NU1701" />
+
+    <!-- Not referenced from code: the EWS autodiscover path loads it by name at
+         runtime and fails without it. -->
     <PackageReference Include="System.DirectoryServices" Version="9.0.0" />
   </ItemGroup>
 
