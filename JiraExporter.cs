@@ -154,12 +154,24 @@ public class JiraExporter
 
         var snapshot = JsonHelper.FromJson<List<WorkPackage>>(Constants.ProjectTasksFileName);
 
+        var usable = snapshot
+            .Where(wp => wp.ProjectTask is not null && wp.ProposalScopingTask is not null)
+            .ToList();
+
+        // Track the same set 'fetch' does. Without this the two commands look at
+        // different universes, and every completed work package would be reported
+        // as new or as removed depending on which ran last.
+        var retained = usable
+            .Where(wp => _doneProjectKeysAndProposalScopingKeys.ContainsKey(wp.ProposalScopingTask.Key))
+            .ToList();
+
         // Keyed by work package rather than by project: one project can have several
         // scoping issues, and each carries its own estimate and budget.
-        var previous = snapshot
-            .Where(wp => wp.ProjectTask is not null && wp.ProposalScopingTask is not null)
+        var previous = usable
+            .Where(wp => !_doneProjectKeysAndProposalScopingKeys.ContainsKey(wp.ProposalScopingTask.Key))
             .ToDictionary(wp => wp.UniqueId, StringComparer.Ordinal);
-        _logger.LogInformation("Loaded {Count} work packages from {FilePath}", previous.Count, Constants.ProjectTasksFileName);
+        _logger.LogInformation("Loaded {Total} work packages from {FilePath}; {Tracked} tracked, {Retained} already completed.",
+            usable.Count, Constants.ProjectTasksFileName, previous.Count, retained.Count);
 
         var scopingIssues = await _jiraClient.Search(
             _settings.ProjectQuery, timeout: 20, customFieldsToInclude: ["estimation", "salesForceBudget"]);
@@ -173,9 +185,14 @@ public class JiraExporter
                 continue;
             }
 
+            if (_doneProjectKeysAndProposalScopingKeys.ContainsKey(issue.Key))
+            {
+                continue;
+            }
+
             current[$"{issue.ParentKey}_{issue.Key}"] = issue;
         }
-        _logger.LogInformation("The query returned {Count} work packages.", current.Count);
+        _logger.LogInformation("The query returned {Count} work packages still being tracked.", current.Count);
 
         foreach (var (uniqueId, workPackage) in previous)
         {
@@ -269,7 +286,7 @@ public class JiraExporter
             report.Changed.Add(new ChangedWorkPackage(workPackage, changes));
         }
 
-        report.NextSnapshot = BuildNextSnapshot(previous, current, report);
+        report.NextSnapshot = BuildNextSnapshot(previous, current, retained, report);
         return report;
     }
 
@@ -288,15 +305,18 @@ public class JiraExporter
     }
 
     // Everything the query still returns: refreshed where it was fetched this run,
-    // carried over from the previous snapshot where it was not.
+    // carried over from the previous snapshot where it was not. Completed work
+    // packages are no longer tracked but stay in the file, so the reports built
+    // from it keep the full history.
     private static List<WorkPackage> BuildNextSnapshot(
         Dictionary<string, WorkPackage> previous,
         Dictionary<string, JiraIssue> current,
+        List<WorkPackage> retained,
         ChangeReport report)
     {
         var refreshed = report.Refreshed.ToDictionary(wp => wp.UniqueId, StringComparer.Ordinal);
 
-        List<WorkPackage> next = [];
+        List<WorkPackage> next = [.. retained];
         foreach (var uniqueId in current.Keys)
         {
             if (refreshed.TryGetValue(uniqueId, out var updated))
