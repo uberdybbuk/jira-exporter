@@ -10,9 +10,11 @@ appsettings.*.local.json
 sample-data/
 jira-api-sample-responses/
 
-# Data fetched from Jira and the reports built from it
-data/MiniHttpCache/
-data/project-info/
+# Analysis material taken from Jira - customer data, kept on disk locally only
+reference/
+
+# Data fetched from Jira and the reports built from it - customer data
+data/
 *.xlsx
 
 # Logs
