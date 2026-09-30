@@ -107,6 +107,8 @@ public static class ReportColumns
         new ("main-project", "Main Project", item => item.ProjectTask?.MainProjectKey ),
         new ("main-project-summary", "Main Project Summary", item => item.ProjectTask?.MainProjectSummary, SingleLine ),
         new ("main-project-link-type", "Main Project Link Type", item => item.ProjectTask?.MainProjectLinkType ),
+        new ("link-count", "Links", item => item.ProjectTask?.IssueLinks.Count ), // the links themselves are on the Relations sheet
+        new ("subtasks", "Subtasks", item => ReportRelations.SubtaskSummary(item.ProjectTask) ),
         new ("estimation", "Estimation", item => item.ProposalScopingTask?.Estimation ),
         new ("salesforce-budget", "SalesForce Budget", item => item.ProposalScopingTask?.SalesForceBudget ),
 

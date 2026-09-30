@@ -130,10 +130,12 @@ public class JiraExporter
     }
 
     // Tracked fields are the report's own columns, minus identity, the timestamps
-    // that always move, and values derived from other columns.
+    // that always move, and values derived from other columns. Relation counts are
+    // left out too: every sub-task (UAT bugs included) would otherwise raise a change.
     private static readonly HashSet<string> s_untrackedColumnIds = new(StringComparer.Ordinal)
     {
-        "project-key", "ps-task", "created", "updated", "latest-date", "error-message", "summary", "description"
+        "project-key", "ps-task", "created", "updated", "latest-date", "error-message", "summary", "description",
+        "link-count", "subtasks"
     };
 
     private static readonly ReportColumnConfig[] s_trackedColumns =

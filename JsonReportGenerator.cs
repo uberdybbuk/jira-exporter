@@ -24,10 +24,14 @@ public class JsonReportGenerator
                     DateTime dt => dt.ToString("yyyy-MM-dd HH:mm:ss"),
                     DateOnly d => d.ToString("yyyy-MM-dd"),
                     decimal dec => dec,
+                    int count => count,
                     null => null,
                     _ => col.Formatter(rawValue)
                 };
             }
+
+            // Nested rather than flattened: JSON has no need for a separate sheet.
+            row["relations"] = ReportRelations.ForIssue(item.ProjectTask).ToList();
             return row;
         }).ToList();
 

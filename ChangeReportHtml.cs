@@ -121,7 +121,7 @@ public static class ChangeReportHtml
 
     // Turns ".../rest/api/latest" into ".../browse/" so keys become links. Any
     // other shape yields an empty prefix and the keys are rendered as plain text.
-    private static string ToBrowseUrl(string baseApiUrl)
+    public static string ToBrowseUrl(string baseApiUrl)
     {
         if (string.IsNullOrWhiteSpace(baseApiUrl) || !Uri.TryCreate(baseApiUrl, UriKind.Absolute, out var uri))
         {
