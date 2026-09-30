@@ -29,7 +29,7 @@ public class JiraCustomFieldExtractor
     // The field may be given as a logical name from settings or as a raw Jira field id.
     public async Task<HashSet<string>> GetDistinctValuesAsync(string jql, string field)
     {
-        var fieldId = _settings.ResolveField(field);
+        var fieldId = NormalizeFieldId(_settings.ResolveField(field));
         _logger.LogInformation("Reading distinct values of {Field} (resolved to {FieldId}) for JQL: {Jql}", field, fieldId, jql);
 
         var searchUrl = _settings.BaseApiUrl.TrimEnd('/') + "/search";
@@ -59,18 +59,23 @@ public class JiraCustomFieldExtractor
 
             foreach (var issue in issues)
             {
-                var value = issue["fields"]?[fieldId];
+                if (issue is not JObject issueObject || issueObject["fields"] is not JObject fields)
+                {
+                    continue;
+                }
+
+                var value = fields[fieldId];
 
                 if (value is JArray array)
                 {
                     foreach (var item in array)
                     {
-                        result.Add(item?.ToString() ?? "");
+                        AddValue(result, item);
                     }
                 }
-                else if (value is not null && value.Type != JTokenType.Null)
+                else
                 {
-                    result.Add(value.ToString());
+                    AddValue(result, value);
                 }
             }
 
@@ -80,5 +85,39 @@ public class JiraCustomFieldExtractor
         } while (startAt < total);
 
         return result;
+    }
+
+    // A bare numeric id like "11820" is a custom field; Jira needs the "customfield_" prefix.
+    private static string NormalizeFieldId(string fieldId) =>
+        !string.IsNullOrEmpty(fieldId) && fieldId.All(char.IsDigit)
+            ? "customfield_" + fieldId
+            : fieldId;
+
+    // Select / option fields come back as objects; take the human-readable label instead of raw JSON.
+    private static void AddValue(HashSet<string> result, JToken value)
+    {
+        if (value is null || value.Type == JTokenType.Null)
+        {
+            return;
+        }
+
+        if (value is JObject obj)
+        {
+            var label = obj.Value<string>("value")
+                ?? obj.Value<string>("name")
+                ?? obj.Value<string>("displayName");
+
+            if (label is not null)
+            {
+                var id = obj.Value<string>("id");
+                result.Add(id is null ? label : $"{label} (id: {id})");
+                return;
+            }
+
+            result.Add(obj.ToString(Newtonsoft.Json.Formatting.None));
+            return;
+        }
+
+        result.Add(value.ToString());
     }
 }

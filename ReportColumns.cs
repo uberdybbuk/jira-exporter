@@ -31,6 +31,24 @@ public static class ReportColumns
     }
     public static string JoinList(IEnumerable<string> items) => string.Join("; ", items);
 
+    // Collapses line breaks (and tabs) to single spaces so a value stays on one CSV row.
+    public static string SingleLine(object val)
+    {
+        var text = val?.ToString() ?? "";
+        if (text.Length == 0)
+        {
+            return text;
+        }
+
+        text = text.Replace("\r\n", " ").Replace('\r', ' ').Replace('\n', ' ').Replace('\t', ' ');
+        while (text.Contains("  "))
+        {
+            text = text.Replace("  ", " ");
+        }
+
+        return text.Trim();
+    }
+
     // Latest milestone date on the project task, as "yyyy-MM-dd <date-name>".
     public static string LatestDate(WorkPackage item)
     {
@@ -77,8 +95,18 @@ public static class ReportColumns
         new ("issue-type", "Issue Type", item => item.ProjectTask?.IssueType ),
         new ("status", "Status", item => item.ProjectTask?.Status ),
         new ("resolution", "Resolution", item => item.ProjectTask?.Resolution ),
-        // new ("company", "Company", item => item.ProjectTask?.Company ),
+        new ("company", "Company", item => item.ProjectTask?.Company ),
         new ("summary", "Summary", item => item.ProjectTask?.Summary ),
+        new ("description", "Description", item => item.ProjectTask?.Description, SingleLine ),
+        new ("initiative", "Initiative", item => item.ProjectTask?.Initiative ),
+        new ("program", "Program", item => item.ProjectTask?.Program ),
+        new ("group", "Group", item => item.ProjectTask?.Group ),
+        new ("group-manager", "Group Manager", item => item.ProjectTask?.GroupManager ),
+        new ("sponsor", "Sponsor", item => item.ProjectTask?.Sponsor ),
+        new ("bank-pm-dept", "Bank Project Management Department", item => item.ProjectTask?.BankProjectManagementDepartment ),
+        new ("main-project", "Main Project", item => item.ProjectTask?.MainProjectKey ),
+        new ("main-project-summary", "Main Project Summary", item => item.ProjectTask?.MainProjectSummary, SingleLine ),
+        new ("main-project-link-type", "Main Project Link Type", item => item.ProjectTask?.MainProjectLinkType ),
         new ("estimation", "Estimation", item => item.ProposalScopingTask?.Estimation ),
         new ("salesforce-budget", "SalesForce Budget", item => item.ProposalScopingTask?.SalesForceBudget ),
 

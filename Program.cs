@@ -42,6 +42,10 @@ class Program
         switch (command)
         {
             case "fetch":
+                if (args.Contains("--reset"))
+                {
+                    ResetWorkspace(logger);
+                }
                 logger.LogInformation("Running: fetch data from Jira");
                 await FetchProposalScopingIssues(loggerFactory, settings);
                 break;
@@ -70,6 +74,11 @@ class Program
                 await ExtractCustomFieldValues(loggerFactory, settings, args[1]);
                 break;
 
+            case "dumpfields":
+                logger.LogInformation("Running: dump all Jira field definitions");
+                await DumpFields(loggerFactory, settings, onlyCustom: args.Contains("--custom"));
+                break;
+
             case "checkforupdates":
                 logger.LogInformation("Running: check for updates in Jira and send email if there are changes");
                 await CheckForUpdatesAndNotify(loggerFactory, settings);
@@ -79,11 +88,14 @@ class Program
                 Console.WriteLine("Usage: dotnet run -- <command>");
                 Console.WriteLine("Commands:");
                 Console.WriteLine("  fetch             Fetch data from Jira and save to disk");
+                Console.WriteLine("                    Add --reset to wipe 'data' (cache, done list, outputs) and start fresh");
                 Console.WriteLine("  report            Generate HTML report from previously saved data");
                 Console.WriteLine("  all               Fetch data from Jira, generate report, and send email");
                 Console.WriteLine("  checkforupdates   Report what changed since the last fetch and email the differences");
                 Console.WriteLine("  customfieldextractor <field>");
                 Console.WriteLine("                    List the distinct values a field takes across the project query");
+                Console.WriteLine("  dumpfields [--custom]");
+                Console.WriteLine("                    Dump all Jira field definitions (add --custom for custom fields only)");
                 break;
         }
 
@@ -101,6 +113,39 @@ class Program
         {
             Console.WriteLine($"  {value}");
         }
+    }
+
+    // Dumps every field Jira exposes (system + custom) to disk and prints a summary.
+    private static async Task DumpFields(ILoggerFactory loggerFactory, AppSettings settings, bool onlyCustom)
+    {
+        var dumper = new JiraFieldDumper(loggerFactory.CreateLogger<JiraFieldDumper>(), settings.Jira);
+        var fields = await dumper.GetAllFieldsAsync();
+
+        if (onlyCustom)
+        {
+            fields = fields.Where(f => f.Custom).ToList();
+        }
+
+        fields = fields
+            .OrderByDescending(f => f.Custom)
+            .ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        Directory.CreateDirectory(Constants.ReferenceDirectory);
+        fields.SaveAsJson(Constants.JiraFieldsFileName);
+
+        Console.WriteLine($"{fields.Count} field(s){(onlyCustom ? " (custom only)" : "")}:");
+        Console.WriteLine($"  {"ID",-22} {"CUSTOM",-6} {"TYPE",-12} NAME");
+        foreach (var field in fields)
+        {
+            var type = field.SchemaType is null
+                ? ""
+                : field.SchemaItems is null ? field.SchemaType : $"{field.SchemaType}<{field.SchemaItems}>";
+            Console.WriteLine($"  {field.Id,-22} {(field.Custom ? "yes" : "no"),-6} {type,-12} {field.Name}");
+        }
+
+        Console.WriteLine();
+        Console.WriteLine($"Full details written to '{Constants.JiraFieldsFileName}'.");
     }
 
     private static async Task CheckForUpdatesAndNotify(ILoggerFactory loggerFactory, AppSettings settings)
@@ -130,6 +175,22 @@ class Program
     {
         var exporter = new JiraExporter(loggerFactory, settings.Jira);
         return await exporter.GetActiveProjects();
+    }
+
+    // Wipes the whole working data directory (HTTP cache, project-info, the done/cancelled
+    // list and every generated file) so the next fetch starts from a clean slate. The
+    // 'reference' directory is left alone: it holds long-lived analysis material, not run output.
+    private static void ResetWorkspace(ILogger<Program> logger)
+    {
+        if (Directory.Exists(Constants.RootDataDirectory))
+        {
+            logger.LogWarning("Reset: deleting '{Dir}' and everything under it.", Constants.RootDataDirectory);
+            Directory.Delete(Constants.RootDataDirectory, recursive: true);
+        }
+        else
+        {
+            logger.LogInformation("Reset: '{Dir}' does not exist, nothing to delete.", Constants.RootDataDirectory);
+        }
     }
 
     // Rebuilds the reports from whatever the last fetch wrote to disk.
