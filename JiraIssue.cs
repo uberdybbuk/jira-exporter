@@ -7,6 +7,25 @@ public class JiraFieldInfoAttribute(string fieldName, string subFieldName = null
     public string SubFieldName { get; } = subFieldName;
 }
 
+// A single Jira issue link, kept with its type and direction so different link types
+// (Relates, Request To Epic, ...) can be told apart during later analysis.
+public class JiraIssueLink
+{
+    public string LinkType { get; set; }   // e.g. "Relates", "Request To Epic"
+    public string Direction { get; set; }  // "inward" or "outward"
+    public string Key { get; set; }        // the linked issue's key
+    public string Summary { get; set; }    // the linked issue's summary
+}
+
+// A single sub-task of an issue, with just the bits needed for later analysis.
+public class JiraSubtask
+{
+    public string Key { get; set; }        // the sub-task's key
+    public string Summary { get; set; }    // fields.summary
+    public string Status { get; set; }     // fields.status.name
+    public string IssueType { get; set; }  // fields.issuetype.name
+}
+
 public class JiraIssue(string key)
 {
     public string Key { get; } = key;
@@ -55,6 +74,24 @@ public class JiraIssue(string key)
 
     [JiraFieldInfo("level3Team")]
     public string Level3Team { get; set; }
+
+    [JiraFieldInfo("initiative")]
+    public string Initiative { get; set; }
+
+    [JiraFieldInfo("program")]
+    public string Program { get; set; }
+
+    [JiraFieldInfo("group")]
+    public string Group { get; set; }
+
+    [JiraFieldInfo("groupManager")]
+    public string GroupManager { get; set; }
+
+    [JiraFieldInfo("sponsor")]
+    public string Sponsor { get; set; }
+
+    [JiraFieldInfo("bankProjectManagementDepartment", "value")]
+    public string BankProjectManagementDepartment { get; set; }
 
     [JiraFieldInfo("estimation")]
     public decimal? Estimation { get; set; }
@@ -116,7 +153,18 @@ public class JiraIssue(string key)
     [JiraFieldInfo("prodDate")]
     public DateOnly? ProdDate { get; set; }
 
-    public HashSet<string> InwardLinkedIssueKeys { get; } = [];
+    // Every issue link on this task, captured with type and direction so different link
+    // types can be analysed later. The "main project" shows up here as an inward link.
+    public List<JiraIssueLink> IssueLinks { get; set; } = [];
+
+    // Sub-tasks of this issue, populated only when 'subtasks' was requested.
+    public List<JiraSubtask> Subtasks { get; set; } = [];
+
+    // The main project/epic this task is linked to, taken from its first inward issue link.
+    public JiraIssueLink MainProjectLink => IssueLinks.FirstOrDefault(l => l.Direction == "inward");
+    public string MainProjectKey => MainProjectLink?.Key;
+    public string MainProjectSummary => MainProjectLink?.Summary;
+    public string MainProjectLinkType => MainProjectLink?.LinkType;
 
     // Logical field names of every property carrying JiraFieldInfo. Translating them to
     // real Jira field names is JiraSettings.ResolveField's job.

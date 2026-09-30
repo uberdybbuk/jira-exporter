@@ -11,7 +11,8 @@ sample-data/
 jira-api-sample-responses/
 
 # Data fetched from Jira and the reports built from it
-data/
+data/MiniHttpCache/
+data/project-info/
 *.xlsx
 
 # Logs

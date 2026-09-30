@@ -133,7 +133,7 @@ public class JiraExporter
     // that always move, and values derived from other columns.
     private static readonly HashSet<string> s_untrackedColumnIds = new(StringComparer.Ordinal)
     {
-        "project-key", "ps-task", "created", "updated", "latest-date", "error-message", "summary"
+        "project-key", "ps-task", "created", "updated", "latest-date", "error-message", "summary", "description"
     };
 
     private static readonly ReportColumnConfig[] s_trackedColumns =

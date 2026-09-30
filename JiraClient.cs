@@ -212,24 +212,58 @@ public class JiraClient
             issue.ParentKey = fieldsJson["parent"]["key"]?.ToString();
         }
 
-        // Present only when issuelinks was requested.
+        // Present only when issuelinks was requested. Capture type and direction so the
+        // main-project link (an inward link) and other link types can be analysed later.
         if (fieldsJson["issuelinks"] is JArray issueLinks)
         {
             foreach (var link in issueLinks)
             {
-                var inwardIssue = link["inwardIssue"];
-                if (inwardIssue != null)
+                var linkType = link["type"]?["name"]?.ToString();
+                AddIssueLink(issue, link["inwardIssue"], linkType, "inward");
+                AddIssueLink(issue, link["outwardIssue"], linkType, "outward");
+            }
+        }
+
+        // Present only when subtasks was requested.
+        if (fieldsJson["subtasks"] is JArray subtasks)
+        {
+            foreach (var subtask in subtasks)
+            {
+                var key = subtask?["key"]?.ToString();
+                if (string.IsNullOrEmpty(key))
                 {
-                    var key = inwardIssue["key"]?.ToString();
-                    if (!string.IsNullOrEmpty(key))
-                    {
-                        issue.InwardLinkedIssueKeys.Add(key);
-                    }
+                    continue;
                 }
+
+                var subtaskFields = subtask["fields"];
+                issue.Subtasks.Add(new JiraSubtask
+                {
+                    Key = key,
+                    Summary = subtaskFields?["summary"]?.ToString(),
+                    Status = subtaskFields?["status"]?["name"]?.ToString(),
+                    IssueType = subtaskFields?["issuetype"]?["name"]?.ToString(),
+                });
             }
         }
 
         return issue;
+    }
+
+    private static void AddIssueLink(JiraIssue issue, JToken linkedIssue, string linkType, string direction)
+    {
+        var key = linkedIssue?["key"]?.ToString();
+        if (string.IsNullOrEmpty(key))
+        {
+            return;
+        }
+
+        issue.IssueLinks.Add(new JiraIssueLink
+        {
+            LinkType = linkType,
+            Direction = direction,
+            Key = key,
+            Summary = linkedIssue["fields"]?["summary"]?.ToString(),
+        });
     }
 
     // Builds the fields= parameter. Attributes carry logical names; the query gets real ones.
@@ -318,7 +352,7 @@ public class JiraClient
             JObject json = await CallJiraApi($"issue/{issueKey}",
                 new
                 {
-                    fields = GetJiraIssueFields(customFieldsToInclude) + ",issuelinks"
+                    fields = GetJiraIssueFields(customFieldsToInclude) + ",issuelinks,subtasks"
                 },
                 useCache: useCache);
 
