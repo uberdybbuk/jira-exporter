@@ -218,9 +218,8 @@ public class JiraClient
         {
             foreach (var link in issueLinks)
             {
-                var linkType = link["type"]?["name"]?.ToString();
-                AddIssueLink(issue, link["inwardIssue"], linkType, "inward");
-                AddIssueLink(issue, link["outwardIssue"], linkType, "outward");
+                AddIssueLink(issue, link["inwardIssue"], link["type"], "inward");
+                AddIssueLink(issue, link["outwardIssue"], link["type"], "outward");
             }
         }
 
@@ -249,7 +248,9 @@ public class JiraClient
         return issue;
     }
 
-    private static void AddIssueLink(JiraIssue issue, JToken linkedIssue, string linkType, string direction)
+    // The link type carries a phrase per direction ("slices" / "is sliced by"); the one
+    // matching the direction reads correctly from this issue's side.
+    private static void AddIssueLink(JiraIssue issue, JToken linkedIssue, JToken linkType, string direction)
     {
         var key = linkedIssue?["key"]?.ToString();
         if (string.IsNullOrEmpty(key))
@@ -257,12 +258,16 @@ public class JiraClient
             return;
         }
 
+        var linkedFields = linkedIssue["fields"];
         issue.IssueLinks.Add(new JiraIssueLink
         {
-            LinkType = linkType,
+            LinkType = linkType?["name"]?.ToString(),
             Direction = direction,
+            Relation = linkType?[direction]?.ToString(),
             Key = key,
-            Summary = linkedIssue["fields"]?["summary"]?.ToString(),
+            Summary = linkedFields?["summary"]?.ToString(),
+            Status = linkedFields?["status"]?["name"]?.ToString(),
+            IssueType = linkedFields?["issuetype"]?["name"]?.ToString(),
         });
     }
 

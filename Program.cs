@@ -52,13 +52,13 @@ class Program
 
             case "report":
                 logger.LogInformation("Running: generate Excel & HTML report from saved data");
-                GenerateReport(logger);
+                GenerateReport(logger, settings.Jira);
                 break;
 
             case "all":
                 logger.LogInformation("Running: fetch data from Jira and generate Excel & HTML report");
                 await FetchProposalScopingIssues(loggerFactory, settings);
-                GenerateReport(logger);
+                GenerateReport(logger, settings.Jira);
                 ExchangeEmailService.SendWithAttachment(
                     settings.Email.ReportRecipient, "Jira projeleri", "Ektedir.",
                     Constants.ExcelReportFileName, settings.Email.AutodiscoverAddress);
@@ -194,7 +194,7 @@ class Program
     }
 
     // Rebuilds the reports from whatever the last fetch wrote to disk.
-    private static void GenerateReport(ILogger<Program> logger)
+    private static void GenerateReport(ILogger<Program> logger, JiraSettings jiraSettings)
     {
         if (!Directory.Exists(Constants.ProjectInfoDirectory))
         {
@@ -241,7 +241,7 @@ class Program
         new JsonReportGenerator().SaveResults(results);
         logger.LogInformation("JSON report saved to '{FileName}'", Constants.JsonReportFileName);
 
-        new ExcelReportGenerator().SaveResults(results);
+        new ExcelReportGenerator().SaveResults(results, ChangeReportHtml.ToBrowseUrl(jiraSettings.BaseApiUrl));
         logger.LogInformation("Excel report saved to '{FileName}'", Constants.ExcelReportFileName);
     }
 }

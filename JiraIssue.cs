@@ -13,8 +13,11 @@ public class JiraIssueLink
 {
     public string LinkType { get; set; }   // e.g. "Relates", "Request To Epic"
     public string Direction { get; set; }  // "inward" or "outward"
+    public string Relation { get; set; }   // the link type's phrase for this direction, e.g. "is sliced by"
     public string Key { get; set; }        // the linked issue's key
     public string Summary { get; set; }    // the linked issue's summary
+    public string Status { get; set; }     // the linked issue's status
+    public string IssueType { get; set; }  // the linked issue's issue type
 }
 
 // A single sub-task of an issue, with just the bits needed for later analysis.

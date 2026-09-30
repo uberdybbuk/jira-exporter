@@ -4,7 +4,11 @@ namespace FourArc.JiraExporter;
 
 public class ExcelReportGenerator
 {
-    public void SaveResults(List<WorkPackage> results)
+    private static readonly string[] s_relationHeaders =
+        ["Project", "Kind", "Link Type", "Relation", "Related Issue", "Summary", "Issue Type", "Status"];
+
+    // browseUrl turns issue keys on the Relations sheet into links; empty leaves them as text.
+    public void SaveResults(List<WorkPackage> results, string browseUrl = "")
     {
         var columns = ReportColumns.All;
         using var workbook = new XLWorkbook();
@@ -32,6 +36,10 @@ public class ExcelReportGenerator
                 {
                     cell.Value = (double)decimalVal;
                 }
+                else if (rawValue is int intVal)
+                {
+                    cell.Value = intVal;
+                }
                 else if (rawValue is DateTime dateTimeVal)
                 {
                     cell.Value = dateTimeVal;
@@ -53,6 +61,52 @@ public class ExcelReportGenerator
 
         worksheet.RangeUsed()?.SetAutoFilter();
 
+        AddRelationsSheet(workbook, ReportRelations.Build(results), browseUrl);
+
         workbook.SaveAs(Constants.ExcelReportFileName);
+    }
+
+    // One row per relation, so relations can be filtered and pivoted rather than read
+    // out of a crowded cell on the main sheet.
+    private static void AddRelationsSheet(XLWorkbook workbook, List<RelationRow> relations, string browseUrl)
+    {
+        var worksheet = workbook.Worksheets.Add("Relations");
+
+        for (int col = 0; col < s_relationHeaders.Length; col++)
+        {
+            var cell = worksheet.Cell(1, col + 1);
+            cell.Value = s_relationHeaders[col];
+            cell.Style.Font.Bold = true;
+            cell.Style.Fill.BackgroundColor = XLColor.LightGray;
+        }
+
+        for (int i = 0; i < relations.Count; i++)
+        {
+            var relation = relations[i];
+            int row = i + 2;
+
+            SetIssueKey(worksheet.Cell(row, 1), relation.ProjectKey, browseUrl);
+            worksheet.Cell(row, 2).Value = relation.Kind;
+            worksheet.Cell(row, 3).Value = relation.LinkType;
+            worksheet.Cell(row, 4).Value = relation.Relation;
+            SetIssueKey(worksheet.Cell(row, 5), relation.Key, browseUrl);
+            worksheet.Cell(row, 6).Value = relation.Summary;
+            worksheet.Cell(row, 7).Value = relation.IssueType;
+            worksheet.Cell(row, 8).Value = relation.Status;
+        }
+
+        worksheet.Columns().AdjustToContents();
+
+        worksheet.RangeUsed()?.SetAutoFilter();
+        worksheet.SheetView.FreezeRows(1);
+    }
+
+    private static void SetIssueKey(IXLCell cell, string key, string browseUrl)
+    {
+        cell.Value = key;
+        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(browseUrl))
+        {
+            cell.SetHyperlink(new XLHyperlink(new Uri(browseUrl + key)));
+        }
     }
 }
