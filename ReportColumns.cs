@@ -97,7 +97,6 @@ public static class ReportColumns
         new ("resolution", "Resolution", item => item.ProjectTask?.Resolution ),
         new ("company", "Company", item => item.ProjectTask?.Company ),
         new ("summary", "Summary", item => item.ProjectTask?.Summary ),
-        new ("description", "Description", item => item.ProjectTask?.Description, SingleLine ),
         new ("initiative", "Initiative", item => item.ProjectTask?.Initiative ),
         new ("program", "Program", item => item.ProjectTask?.Program ),
         new ("group", "Group", item => item.ProjectTask?.Group ),
