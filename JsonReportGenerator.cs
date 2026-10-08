@@ -1,3 +1,4 @@
+using System.Text.Encodings.Web;
 using System.Text.Json;
 
 namespace FourArc.JiraExporter;
@@ -7,6 +8,7 @@ public class JsonReportGenerator
     private static readonly JsonSerializerOptions s_jsonOptions = new()
     {
         WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping, // Turkish characters as-is, as in JsonHelper
     };
 
     public void SaveResults(List<WorkPackage> results)

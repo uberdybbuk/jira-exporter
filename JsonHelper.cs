@@ -1,6 +1,5 @@
 using System.Text.Encodings.Web;
 using System.Text.Json;
-using System.Text.Unicode;
 
 namespace FourArc.JiraExporter;
 
@@ -10,7 +9,9 @@ public static class JsonHelper
     {
         WriteIndented = true,
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-        Encoder = JavaScriptEncoder.Create(UnicodeRanges.All) // write Unicode characters as-is instead of escaping them
+        // Writes Turkish and other non-ASCII characters, and ' + < > &, as-is instead of as \uXXXX.
+        // "Unsafe" only matters when the JSON is embedded in HTML, which these files never are.
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
     public static string ToJson(this object obj)
