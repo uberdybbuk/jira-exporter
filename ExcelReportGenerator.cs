@@ -4,8 +4,8 @@ namespace FourArc.JiraExporter;
 
 public class ExcelReportGenerator
 {
-    private static readonly string[] s_relationHeaders =
-        ["Project", "Kind", "Link Type", "Relation", "Related Issue", "Summary", "Issue Type", "Status"];
+    // Issue keys in these Relations columns become links to Jira.
+    private static readonly HashSet<string> s_relationKeyColumns = new(StringComparer.Ordinal) { "ProjectKey", "RelatedKey" };
 
     // browseUrl turns issue keys on the Relations sheet into links; empty leaves them as text.
     public void SaveResults(List<WorkPackage> results, string browseUrl = "")
@@ -67,46 +67,43 @@ public class ExcelReportGenerator
     }
 
     // One row per relation, so relations can be filtered and pivoted rather than read
-    // out of a crowded cell on the main sheet.
+    // out of a crowded cell on the main sheet. Every value is written as text and a
+    // missing one leaves the cell blank, so an export to CSV reads back unchanged.
     private static void AddRelationsSheet(XLWorkbook workbook, List<RelationRow> relations, string browseUrl)
     {
+        var columns = ReportRelations.Columns;
         var worksheet = workbook.Worksheets.Add("Relations");
 
-        for (int col = 0; col < s_relationHeaders.Length; col++)
+        for (int col = 0; col < columns.Length; col++)
         {
             var cell = worksheet.Cell(1, col + 1);
-            cell.Value = s_relationHeaders[col];
+            cell.Value = columns[col].Header;
             cell.Style.Font.Bold = true;
             cell.Style.Fill.BackgroundColor = XLColor.LightGray;
         }
 
         for (int i = 0; i < relations.Count; i++)
         {
-            var relation = relations[i];
-            int row = i + 2;
+            for (int col = 0; col < columns.Length; col++)
+            {
+                var value = columns[col].Value(relations[i]);
+                if (string.IsNullOrEmpty(value))
+                {
+                    continue;
+                }
 
-            SetIssueKey(worksheet.Cell(row, 1), relation.ProjectKey, browseUrl);
-            worksheet.Cell(row, 2).Value = relation.Kind;
-            worksheet.Cell(row, 3).Value = relation.LinkType;
-            worksheet.Cell(row, 4).Value = relation.Relation;
-            SetIssueKey(worksheet.Cell(row, 5), relation.Key, browseUrl);
-            worksheet.Cell(row, 6).Value = relation.Summary;
-            worksheet.Cell(row, 7).Value = relation.IssueType;
-            worksheet.Cell(row, 8).Value = relation.Status;
+                var cell = worksheet.Cell(i + 2, col + 1);
+                cell.Value = value;
+                if (s_relationKeyColumns.Contains(columns[col].Header) && !string.IsNullOrEmpty(browseUrl))
+                {
+                    cell.SetHyperlink(new XLHyperlink(new Uri(browseUrl + value)));
+                }
+            }
         }
 
         worksheet.Columns().AdjustToContents();
 
         worksheet.RangeUsed()?.SetAutoFilter();
         worksheet.SheetView.FreezeRows(1);
-    }
-
-    private static void SetIssueKey(IXLCell cell, string key, string browseUrl)
-    {
-        cell.Value = key;
-        if (!string.IsNullOrEmpty(key) && !string.IsNullOrEmpty(browseUrl))
-        {
-            cell.SetHyperlink(new XLHyperlink(new Uri(browseUrl + key)));
-        }
     }
 }

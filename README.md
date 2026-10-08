@@ -95,6 +95,31 @@ A project can have several scoping issues, and estimates and budgets vary betwee
 them rather than across the project as a whole — so the work package, not the
 project, is the unit the reports are built on.
 
+## Relations sheet
+
+The Excel report's `Relations` sheet lists every relation of each project issue in
+the report, one row each, and is meant to be read by a program as well as by
+people:
+
+| Column | Values |
+|---|---|
+| `ProjectKey` | the project issue |
+| `Kind` | `parent`, `link` or `subtask` |
+| `LinkType` | links only: the link type's name, e.g. `Relates`, `Slice` |
+| `Direction` | links only: `inward` or `outward`, seen from the project |
+| `RelatedKey` | the related issue |
+| `RelatedSummary`, `RelatedIssueType`, `RelatedStatus` | of the related issue; empty for a parent |
+| `RelatedStatusCategory` | `new`, `indeterminate` or `done` |
+| `LinkDescription` | links only: Jira's wording, e.g. `is sliced by` |
+
+Every value is text and a value that does not apply is a blank cell. New columns
+are only ever added at the end.
+
+The rows are the complete set for each project in the report: a link removed in
+Jira is not marked, it just stops appearing. A reader should therefore replace a
+project's relations wholesale rather than upsert them row by row. A project on the
+`Report` sheet with no rows here has no relations.
+
 ## Completed projects drop out after two months
 
 A project counts as closed when its status is in Jira's `done` category, or is

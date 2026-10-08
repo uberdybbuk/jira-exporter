@@ -246,6 +246,7 @@ public class JiraClient
                     Key = key,
                     Summary = subtaskFields?["summary"]?.ToString(),
                     Status = subtaskFields?["status"]?["name"]?.ToString(),
+                    StatusCategory = subtaskFields?["status"]?["statusCategory"]?["key"]?.ToString(),
                     IssueType = subtaskFields?["issuetype"]?["name"]?.ToString(),
                 });
             }
@@ -273,6 +274,7 @@ public class JiraClient
             Key = key,
             Summary = linkedFields?["summary"]?.ToString(),
             Status = linkedFields?["status"]?["name"]?.ToString(),
+            StatusCategory = linkedFields?["status"]?["statusCategory"]?["key"]?.ToString(),
             IssueType = linkedFields?["issuetype"]?["name"]?.ToString(),
         });
     }

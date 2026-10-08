@@ -17,6 +17,7 @@ public class JiraIssueLink
     public string Key { get; set; }        // the linked issue's key
     public string Summary { get; set; }    // the linked issue's summary
     public string Status { get; set; }     // the linked issue's status
+    public string StatusCategory { get; set; } // the linked issue's status category: "new", "indeterminate" or "done"
     public string IssueType { get; set; }  // the linked issue's issue type
 }
 
@@ -26,6 +27,7 @@ public class JiraSubtask
     public string Key { get; set; }        // the sub-task's key
     public string Summary { get; set; }    // fields.summary
     public string Status { get; set; }     // fields.status.name
+    public string StatusCategory { get; set; } // fields.status.statusCategory.key
     public string IssueType { get; set; }  // fields.issuetype.name
 }
 
