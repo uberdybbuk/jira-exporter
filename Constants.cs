@@ -13,7 +13,13 @@ public static class Constants
     public static readonly string AllProposalScopingIssuesFileName = Path.Combine(RootDataDirectory, "all-proposal-scoping-issues.json");
     public static readonly string ActiveProposalScopingIssuesFileName = Path.Combine(RootDataDirectory, "proposal-scoping-issues.json");
     public static readonly string ProjectTasksFileName = Path.Combine(RootDataDirectory, "project-tasks.json");
-    public static readonly string DoneProjectsAndProposalsFileName = Path.Combine(RootDataDirectory, "done-or-cancelled-projects-and-proposals.txt");
+    public static readonly string DoneProjectsAndProposalsFileName = Path.Combine(RootDataDirectory, "done-or-cancelled-projects-and-proposals.csv");
+
+    // The free-text format used before the CSV; converted once on first load.
+    public static readonly string LegacyDoneProjectsAndProposalsFileName = Path.Combine(RootDataDirectory, "done-or-cancelled-projects-and-proposals.txt");
+
+    // How long a closed work package keeps being fetched and reported after it was detected.
+    public const int CompletedRetentionMonths = 2;
 
     public static readonly string HtmlReportFileName = Path.Combine(RootDataDirectory, "results.html");
     public static readonly string ExcelReportFileName = Path.Combine(RootDataDirectory, "results-excel.xlsx");

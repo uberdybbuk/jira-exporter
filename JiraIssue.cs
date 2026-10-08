@@ -60,6 +60,15 @@ public class JiraIssue(string key)
     [JiraFieldInfo("status", "name")]
     public string Status { get; set; }
 
+    // The status's category key: "new", "indeterminate" or "done". Read from the status
+    // object, which is nested too deep for JiraFieldInfo.
+    public string StatusCategory { get; set; }
+
+    // Closed by category, so a done-category status with any name ("Closed", "Rejected")
+    // counts. The two names are kept for statuses whose category says otherwise and for
+    // snapshots written before StatusCategory was captured.
+    public bool IsClosed => StatusCategory == "done" || Status is "Done" or "Cancelled";
+
     [JiraFieldInfo("resolution", "name")]
     public string Resolution { get; set; }
 

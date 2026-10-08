@@ -7,7 +7,10 @@ public class JiraExporter
     private readonly ILogger<JiraExporter> _logger;
     private readonly JiraClient _jiraClient;
     private readonly ILoggerFactory _loggerFactory;
-    private readonly Dictionary<string, string> _doneProjectKeysAndProposalScopingKeys = []; // key: proposal scoping task key, value: project key
+    private readonly CompletedWorkPackages _completed;
+
+    // One time for the whole run, so every work package closed in it gets the same detection time.
+    private readonly DateTime _runStartedAt = DateTime.Now;
     private readonly JiraSettings _settings;
 
     public JiraExporter(ILoggerFactory loggerFactory, JiraSettings settings)
@@ -17,33 +20,9 @@ public class JiraExporter
         _logger = loggerFactory.CreateLogger<JiraExporter>();
         _jiraClient = new JiraClient(_loggerFactory.CreateLogger<JiraClient>(), settings);
 
-        LoadDoneProjectsAndProposals();
         Directory.CreateDirectory(Constants.ProjectInfoDirectory);
-    }
-
-    private void LoadDoneProjectsAndProposals()
-    {
-        var filePath = Constants.DoneProjectsAndProposalsFileName;
-        if (!File.Exists(filePath))
-        {
-            _logger.LogWarning("Done projects and proposals file not found at {FilePath}", filePath);
-            return;
-        }
-
-        var lines = File.ReadAllLines(filePath);
-
-        foreach (var line in lines)
-        {
-            var parts = line.Split(';'); // there may be more than 2 parts but we only care about the first 2 (project key and proposal scoping key)
-            if (parts.Length >= 2)
-            {
-                var projectKey = parts[0].Trim();
-                var proposalScopingKey = parts[1].Trim();
-                _doneProjectKeysAndProposalScopingKeys[proposalScopingKey] = projectKey;
-            }
-        }
-
-        _logger.LogInformation("Loaded {Count} done project keys from {FilePath}", _doneProjectKeysAndProposalScopingKeys.Count, filePath);
+        _completed = CompletedWorkPackages.Load(
+            Constants.DoneProjectsAndProposalsFileName, Constants.LegacyDoneProjectsAndProposalsFileName, _logger);
     }
 
     private async Task<JiraIssue> LoadProjectTaskAsync(string projectKey)
@@ -80,14 +59,18 @@ public class JiraExporter
                 JiraIssue projectTask = await LoadProjectTaskAsync(proposalTask.ParentKey);
                 var projectTaskGroup = new WorkPackage(projectTask, proposalTask);
 
-                // Record it as finished so later runs skip it. This run still keeps the issue,
-                // so a completed project is captured once before it drops out.
-                if (projectTask.Status == "Done" || projectTask.Status == "Cancelled")
+                // A closed work package stays in the reports for the retention period, so its
+                // closing is delivered even if one report goes missing; then it drops out.
+                if (projectTask.IsClosed)
                 {
-                    string status = projectTask.Status;
-                    _doneProjectKeysAndProposalScopingKeys[proposalTask.Key] = projectTask.Key;
-                    File.AppendAllLines(Constants.DoneProjectsAndProposalsFileName, [$"{projectTask.Key};{proposalTask.Key};{"Auto-added on " + DateTime.Now.ToString("yyyy-MM-dd")}. Status = {status}"]);
-                    _logger.LogInformation("Project {ProjectKey} is marked as {Status}. Added to done projects and proposals list.", projectTask.Key, status);
+                    if (_completed.MarkClosed(projectTask, proposalTask, _runStartedAt))
+                    {
+                        _logger.LogInformation("Project {ProjectKey} is {Status}. {Key} added to the completed list.", projectTask.Key, projectTask.Status, proposalTask.Key);
+                    }
+                }
+                else if (_completed.Remove(proposalTask.Key))
+                {
+                    _logger.LogInformation("Project {ProjectKey} was reopened ({Status}). {Key} removed from the completed list.", projectTask.Key, projectTask.Status, proposalTask.Key);
                 }
 
                 resultList.Add(projectTaskGroup);
@@ -102,6 +85,7 @@ public class JiraExporter
             }
         }
 
+        _completed.Save();
         _logger.LogInformation("Finished processing issues. Total project issues fetched: {Count}", resultList.Count);
 
         return resultList;
@@ -117,11 +101,12 @@ public class JiraExporter
         await proposalScopingIssues.SaveAsJsonAsync(Constants.AllProposalScopingIssuesFileName);
         _logger.LogInformation("Fetched {Count} proposal scoping issues. Data saved to {FileName}", proposalScopingIssues.Count, Constants.AllProposalScopingIssuesFileName);
 
-        // Drop the ones already recorded as finished; the dictionary is keyed by scoping issue.
+        // Drop the work packages closed longer ago than the retention period.
         int allCount = proposalScopingIssues.Count;
-        proposalScopingIssues = proposalScopingIssues.Where(issue => !_doneProjectKeysAndProposalScopingKeys.ContainsKey(issue.Key)).ToList();
+        proposalScopingIssues = proposalScopingIssues.Where(issue => !_completed.IsRetired(issue.Key, _runStartedAt)).ToList();
         int activeCount = proposalScopingIssues.Count;
-        _logger.LogInformation("Filtered proposal scoping issues based on done projects. Before: {BeforeCount}, After: {AfterCount}", allCount, activeCount);
+        _logger.LogInformation("Filtered out work packages closed more than {Months} months ago. Before: {BeforeCount}, After: {AfterCount}",
+            Constants.CompletedRetentionMonths, allCount, activeCount);
 
         await proposalScopingIssues.SaveAsJsonAsync(Constants.ActiveProposalScopingIssuesFileName);
         _logger.LogInformation("Active proposal scoping issues saved to {FileName}", Constants.ActiveProposalScopingIssuesFileName);
@@ -160,17 +145,17 @@ public class JiraExporter
             .Where(wp => wp.ProjectTask is not null && wp.ProposalScopingTask is not null)
             .ToList();
 
-        // Track the same set 'fetch' does. Without this the two commands look at
-        // different universes, and every completed work package would be reported
-        // as new or as removed depending on which ran last.
+        // Completed work packages are carried over untouched, whether or not 'fetch' is
+        // still reporting them within the retention period. Without this every one of
+        // them would be reported as new or as removed depending on which ran last.
         var retained = usable
-            .Where(wp => _doneProjectKeysAndProposalScopingKeys.ContainsKey(wp.ProposalScopingTask.Key))
+            .Where(wp => _completed.Contains(wp.ProposalScopingTask.Key))
             .ToList();
 
         // Keyed by work package rather than by project: one project can have several
         // scoping issues, and each carries its own estimate and budget.
         var previous = usable
-            .Where(wp => !_doneProjectKeysAndProposalScopingKeys.ContainsKey(wp.ProposalScopingTask.Key))
+            .Where(wp => !_completed.Contains(wp.ProposalScopingTask.Key))
             .ToDictionary(wp => wp.UniqueId, StringComparer.Ordinal);
         _logger.LogInformation("Loaded {Total} work packages from {FilePath}; {Tracked} tracked, {Retained} already completed.",
             usable.Count, Constants.ProjectTasksFileName, previous.Count, retained.Count);
@@ -187,7 +172,7 @@ public class JiraExporter
                 continue;
             }
 
-            if (_doneProjectKeysAndProposalScopingKeys.ContainsKey(issue.Key))
+            if (_completed.Contains(issue.Key))
             {
                 continue;
             }

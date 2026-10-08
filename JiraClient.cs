@@ -210,6 +210,8 @@ public class JiraClient
                 }
             });
 
+        issue.StatusCategory = fieldsJson["status"]?["statusCategory"]?["key"]?.ToString();
+
         // Present only when the field was requested.
         if (fieldsJson["parent"] != null)
         {

@@ -95,14 +95,28 @@ A project can have several scoping issues, and estimates and budgets vary betwee
 them rather than across the project as a whole — so the work package, not the
 project, is the unit the reports are built on.
 
-## Completed projects are fetched once
+## Completed projects drop out after two months
 
-When a project reaches `Done` or `Cancelled` it is written to
-`data/done-or-cancelled-projects-and-proposals.txt` and excluded from later runs.
-It is processed one final time before being excluded, so the last snapshot of a
-completed project is whatever it looked like at that moment.
+A project counts as closed when its status is in Jira's `done` category, or is
+named `Done` or `Cancelled`. Its work packages are then written to
+`data/done-or-cancelled-projects-and-proposals.csv`:
 
-Two consequences: later changes to a completed project are never picked up, and
-projects completed before this tool first ran never appear at all. Whatever
-consumes the output should keep its own archive rather than treating each run as
-the full picture.
+```
+ProjectKey;ProposalScopingKey;Status;Resolved;DetectedAt
+DENIZ-40348;DENIZ-42560;Done;2022-12-12;2026-09-30 10:12:16
+```
+
+`Resolved` is Jira's resolution date; `DetectedAt` is the run that noticed the
+closing. For two months after `DetectedAt` the work package is still fetched and
+reported, so the closing reaches whatever consumes the reports even if one report
+is never delivered; after that it is skipped. A project reopened within those two
+months is removed from the file and tracked again.
+
+The file is separated by semicolons so Excel with a Turkish locale opens it in
+columns. The older free-text `.txt` file is converted on the first run and kept as
+`.txt.bak`; its rows have no `Resolved` date.
+
+Later changes to a project that has dropped out are never picked up, and `fetch
+--reset` deletes the file, so the next run reports every closed project again.
+Whatever consumes the output should upsert rather than treat each run as the full
+picture.
