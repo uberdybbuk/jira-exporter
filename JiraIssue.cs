@@ -69,6 +69,10 @@ public class JiraIssue(string key)
     [JiraFieldInfo("updated")]
     public DateTime Updated { get; set; }
 
+    // Empty until the issue is resolved, and cleared again if it is reopened.
+    [JiraFieldInfo("resolutiondate")]
+    public DateTime? Resolved { get; set; }
+
     [JiraFieldInfo("team", "name")]
     public string Team { get; set; }
 

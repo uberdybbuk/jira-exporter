@@ -66,9 +66,10 @@ the same changes to be reported on the next run rather than losing them.
 
 Compared fields are the report's own columns, minus the ones that carry no signal:
 identity (`ProjectKey`, `Proposal Scoping Task`), timestamps that always move
-(`Created`, `Updated`), `Latest Date` (derived from the phase dates it would
-duplicate), `Summary`, and `Error Message`. That leaves status, resolution, both
-assignees, issue type, estimate, budget and the sixteen phase dates.
+(`Created`, `Updated`, `Proposal Scoping Created`), `Latest Date` (derived from
+the phase dates it would duplicate), `Summary`, `Error Message`, and the relation
+counts (`Links`, `Subtasks`). That leaves status, resolution, both assignees,
+issue type, estimate, budget, the scoping issue's resolved date and the phase dates.
 
 ## Field mapping
 

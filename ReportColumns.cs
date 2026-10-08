@@ -137,6 +137,8 @@ public static class ReportColumns
         new ("actual-prod-date", "Actual Prod Date", item => item.ProjectTask?.ActualProdDate, val => ToSmallDateString((DateOnly?)val) ),
         new ("prod-date", "Prod Date", item => item.ProjectTask?.ProdDate, val => ToSmallDateString((DateOnly?)val) ),
         new ("ps-task", "Proposal Scoping Task", item => item.ProposalScopingTask?.Key ),
+        new ("ps-created", "Proposal Scoping Created", item => item.ProposalScopingTask?.Created, val => ToSmallDateString((DateTime?)val) ),
+        new ("ps-resolved", "Proposal Scoping Resolved", item => item.ProposalScopingTask?.Resolved, val => ToSmallDateString((DateTime?)val) ),
         new ("error-message", "Error Message", item => ReportColumns.JoinList(item.ErrorMessages) ),
     ];
 }

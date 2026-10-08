@@ -134,7 +134,7 @@ public class JiraExporter
     // left out too: every sub-task (UAT bugs included) would otherwise raise a change.
     private static readonly HashSet<string> s_untrackedColumnIds = new(StringComparer.Ordinal)
     {
-        "project-key", "ps-task", "created", "updated", "latest-date", "error-message", "summary", "description",
+        "project-key", "ps-task", "created", "ps-created", "updated", "latest-date", "error-message", "summary", "description",
         "link-count", "subtasks"
     };
 

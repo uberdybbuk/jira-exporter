@@ -162,6 +162,10 @@ public class JiraClient
                 {
                     pi.SetValue(issue, DateTime.Parse(value));
                 }
+                else if (pi.PropertyType == typeof(DateTime?))
+                {
+                    pi.SetValue(issue, string.IsNullOrEmpty(value) ? null : DateTime.Parse(value));
+                }
                 else if (pi.PropertyType == typeof(DateOnly?)) // only the types actually used are handled
                 {
                     if (string.IsNullOrEmpty(value))
