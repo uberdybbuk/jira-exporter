@@ -25,15 +25,26 @@ public class JiraExporter
             Constants.DoneProjectsAndProposalsFileName, Constants.LegacyDoneProjectsAndProposalsFileName, _logger);
     }
 
+    // Project issues read in this run. A project with several scoping issues is read once;
+    // the on-disk HTTP cache is bypassed so a second fetch on the same day sees Jira's current data.
+    private readonly Dictionary<string, JiraIssue> _projectTasks = new(StringComparer.Ordinal);
+
     private async Task<JiraIssue> LoadProjectTaskAsync(string projectKey)
     {
+        if (_projectTasks.TryGetValue(projectKey, out var loaded))
+        {
+            return loaded;
+        }
+
         // Every field JiraIssue declares, so the single-issue fetch below returns all of them.
         var customFieldsToInclude = JiraIssue.GetCustomFields();
         _logger.LogDebug("Additional custom fields to include: {CustomFields}", string.Join(", ", customFieldsToInclude));
 
         try
         {
-            return await _jiraClient.GetIssue(projectKey, customFieldsToInclude);
+            var projectTask = await _jiraClient.GetIssue(projectKey, customFieldsToInclude, useCache: false);
+            _projectTasks[projectKey] = projectTask;
+            return projectTask;
         }
         catch (Exception e)
         {

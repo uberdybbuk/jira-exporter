@@ -341,7 +341,14 @@ public class JiraClient
                 issues.Add(issue);
             }
 
-            startAt += PageSize;
+            // Advance by what the server actually returned: it may cap maxResults below PageSize,
+            // and stepping by PageSize would then skip issues without any error.
+            if (issueList.Count == 0)
+            {
+                break;
+            }
+
+            startAt += issueList.Count;
         } while (startAt < total);
 
         _logger.LogInformation("Finished Jira search. Retrieved {IssueCount} issues for JQL: {Jql}", issues.Count, jql);
@@ -389,7 +396,7 @@ public class JiraClient
         }
     }
 
-    // TODO: not called from anywhere yet. Kept for looking at how an issue reached its
+    // Used by the 'changelogs' command, to see how an issue reached its
     // current state, e.g. when a status moved or an estimate was revised.
     public async Task<ChangeLogResponse> DownloadIssueHistoryAsync(string issueKey, int startAt = 0, int maxResults = 100)
     {
