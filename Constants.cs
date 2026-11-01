@@ -29,4 +29,8 @@ public static class Constants
 
     public static readonly string ChangelogsFileName = Path.Combine(RootDataDirectory, "changelogs.json");
     public static readonly string ChangelogsWorkbookFileName = Path.Combine(RootDataDirectory, "changelogs.xlsx");
+    public static readonly string ChangelogBatchDirectory = Path.Combine(RootDataDirectory, "changelogs");
+
+    // 'changelogs' reads open projects and the ones resolved since the start of this many months ago.
+    public const int ChangelogClosedMonths = 6;
 }

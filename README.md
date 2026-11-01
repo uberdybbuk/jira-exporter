@@ -44,7 +44,7 @@ dotnet run -- fetch
 | `report` | Builds Excel and JSON reports from previously fetched data |
 | `all` | `fetch`, then `report`, then emails the report |
 | `checkforupdates` | Emails what changed since the last snapshot |
-| `changelogs` | Writes the full change history of every project and scoping issue to `data/changelogs.json` and `data/changelogs.xlsx` |
+| `changelogs` | Writes the change history of open and recently resolved project issues to `data/changelogs.json` and `data/changelogs.xlsx`. Batches are kept in `data/changelogs/`, so an interrupted run resumes; delete that folder to read everything again |
 
 `fetch` and `report` run anywhere. `all` and `checkforupdates` send mail through
 Exchange Web Services as the signed-in Windows account, and autodiscover resolves

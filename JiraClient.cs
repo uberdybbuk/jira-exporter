@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -7,32 +8,26 @@ using System.Text.Json.Serialization;
 
 namespace FourArc.JiraExporter;
 
-public class JiraClient
+public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
 {
-    private readonly ILogger<JiraClient> _logger;
-    private readonly JiraSettings _settings;
+    private readonly JiraSettings settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
     private const int PageSize = 500;
-    private readonly MiniHttpCache _httpCache;
-
-    public JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
-    {
-        _logger = logger;
-        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        _httpCache = new MiniHttpCache();
-    }
+    private readonly MiniHttpCache httpCache = new();
 
     private HttpClient CreateHttpClientWithAuthHeaders(int timeout)
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(timeout) };
-        var authToken = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{_settings.Username}:{_settings.Password}"));
+        // The changelog JSON repeats the same avatar URLs hundreds of times; gzip shrinks it a lot when Jira offers it.
+        var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate };
+        var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(timeout) };
+        var authToken = Convert.ToBase64String(Encoding.ASCII.GetBytes($"{settings.Username}:{settings.Password}"));
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authToken);
         return client;
     }
 
     private string CreateJiraEndpointUrl(string endpoint, object parameters)
     {
-        var url = $"{_settings.BaseApiUrl}/{endpoint}";
+        var url = $"{settings.BaseApiUrl}/{endpoint}";
 
         if (parameters != null)
         {
@@ -50,36 +45,36 @@ public class JiraClient
 
         if (useCache)
         {
-            if (_httpCache.TryGetFromCache(url, out string cachedResponse))
+            if (httpCache.TryGetFromCache(url, out string cachedResponse))
             {
-                _logger.LogDebug("Cache hit for URL: {Url}", url);
+                logger.LogDebug("Cache hit for URL: {Url}", url);
                 return JObject.Parse(cachedResponse);
             }
             else
             {
-                _logger.LogDebug("Cache miss for URL: {Url}", url);
+                logger.LogDebug("Cache miss for URL: {Url}", url);
             }
         }
         else
         {
-            _logger.LogDebug("Cache bypassed for URL: {Url}", url);
+            logger.LogDebug("Cache bypassed for URL: {Url}", url);
         }
 
-        _logger.LogInformation("Calling Jira API: {Url}", url);
+        logger.LogInformation("Calling Jira API: {Url}", url);
         using HttpClient client = CreateHttpClientWithAuthHeaders(timeout);
         using HttpResponseMessage response = await client.GetAsync(url);
 
         string content = await response.Content.ReadAsStringAsync();
         if (!response.IsSuccessStatusCode)
         {
-            _logger.LogError($"API call failed: {{Url}}. Status: {{StatusCode}} {{Content}}", url, response.StatusCode, content);
+            logger.LogError($"API call failed: {{Url}}. Status: {{StatusCode}} {{Content}}", url, response.StatusCode, content);
             throw new Exception($"API call failed: {response.StatusCode} - {content}");
         }
 
         if (response.Content?.Headers?.ContentType?.MediaType != "application/json")
         {
-            _logger.LogError($"Expected JSON response, but got: {{ContentType}} from {{Url}}", response.Content?.Headers?.ContentType?.MediaType, url);
-            _logger.LogError("Response content: {Content}", content);
+            logger.LogError($"Expected JSON response, but got: {{ContentType}} from {{Url}}", response.Content?.Headers?.ContentType?.MediaType, url);
+            logger.LogError("Response content: {Content}", content);
             throw new Exception($"Expected JSON response, but got: {response.Content?.Headers?.ContentType?.MediaType}");
         }
 
@@ -90,17 +85,17 @@ public class JiraClient
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to parse JSON response from {Url}. Content: {Content}", url, content);
+            logger.LogError(ex, "Failed to parse JSON response from {Url}. Content: {Content}", url, content);
             throw new Exception("Failed to parse JSON response", ex);
         }
 
         if (json == null) // Should be caught by the try-catch above, but as a safeguard.
         {
-            _logger.LogError("Parsed JSON response is null from {Url}. Content: {Content}", url, content);
+            logger.LogError("Parsed JSON response is null from {Url}. Content: {Content}", url, content);
             throw new Exception("Failed to parse JSON response (resulted in null)");
         }
 
-        _httpCache.AddToCache(url, content);
+        httpCache.AddToCache(url, content);
         return json;
     }
 
@@ -140,7 +135,7 @@ public class JiraClient
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Error in SafeGetValue for property '{jiraIssueKey}' '{PropertyName}' (subProperty: '{SubPropertyName}')", issue.Key, propertyName, subPropertyName);
+            logger.LogError(e, "Error in SafeGetValue for property '{jiraIssueKey}' '{PropertyName}' (subProperty: '{SubPropertyName}')", issue.Key, propertyName, subPropertyName);
             return "";
         }
     }
@@ -149,7 +144,7 @@ public class JiraClient
     {
         typeof(JiraIssue).GetProperties()
             .Where(p => p.GetCustomAttributes(typeof(JiraFieldInfoAttribute), false).Length > 0)
-            .Where(p => !_settings.IsMappedField(((JiraFieldInfoAttribute)p.GetCustomAttributes(typeof(JiraFieldInfoAttribute), false)[0]).FieldName)
+            .Where(p => !settings.IsMappedField(((JiraFieldInfoAttribute)p.GetCustomAttributes(typeof(JiraFieldInfoAttribute), false)[0]).FieldName)
                         || (customFieldsToInclude != null
                             && customFieldsToInclude.Contains(((JiraFieldInfoAttribute)p.GetCustomAttributes(typeof(JiraFieldInfoAttribute), false)[0]).FieldName)))
             .ToList()
@@ -157,7 +152,7 @@ public class JiraClient
             {
                 var attr = (JiraFieldInfoAttribute)pi.GetCustomAttributes(typeof(JiraFieldInfoAttribute), false)[0];
                 // The attribute holds a logical name; settings resolve it to the real Jira field.
-                var value = SafeGetValue(issue, fieldsJson, _settings.ResolveField(attr.FieldName), attr.SubFieldName);
+                var value = SafeGetValue(issue, fieldsJson, settings.ResolveField(attr.FieldName), attr.SubFieldName);
                 if (pi.PropertyType == typeof(DateTime))
                 {
                     pi.SetValue(issue, DateTime.Parse(value));
@@ -185,7 +180,7 @@ public class JiraClient
                     }
                     else
                     {
-                        _logger.LogWarning("Failed to parse decimal for issue {Key}, field {FieldName}: '{Value}'", issue.Key, attr.FieldName, value);
+                        logger.LogWarning("Failed to parse decimal for issue {Key}, field {FieldName}: '{Value}'", issue.Key, attr.FieldName, value);
                     }
                 }
                 else if (pi.PropertyType == typeof(decimal?))
@@ -200,7 +195,7 @@ public class JiraClient
                     }
                     else
                     {
-                        _logger.LogWarning("Failed to parse nullable decimal for issue {Key}, field {FieldName}: '{Value}'", issue.Key, attr.FieldName, value);
+                        logger.LogWarning("Failed to parse nullable decimal for issue {Key}, field {FieldName}: '{Value}'", issue.Key, attr.FieldName, value);
                         pi.SetValue(issue, null);
                     }
                 }
@@ -285,8 +280,8 @@ public class JiraClient
         var standardFields = typeof(JiraIssue).GetProperties()
             .Where(p => p.GetCustomAttributes(typeof(JiraFieldInfoAttribute), false).Length > 0)
             .Select(p => (JiraFieldInfoAttribute)p.GetCustomAttributes(typeof(JiraFieldInfoAttribute), false)[0])
-            .Where(attr => !_settings.IsMappedField(attr.FieldName) || (customFieldsToInclude != null && customFieldsToInclude.Contains(attr.FieldName)))
-            .Select(attr => _settings.ResolveField(attr.FieldName))
+            .Where(attr => !settings.IsMappedField(attr.FieldName) || (customFieldsToInclude != null && customFieldsToInclude.Contains(attr.FieldName)))
+            .Select(attr => settings.ResolveField(attr.FieldName))
             .Distinct()
             .ToList();
 
@@ -300,14 +295,14 @@ public class JiraClient
 
     public async Task<List<JiraIssue>> Search(string jql, int timeout = 5, string[] customFieldsToInclude = null)
     {
-        _logger.LogInformation("Starting Jira search with JQL: {Jql}", jql);
+        logger.LogInformation("Starting Jira search with JQL: {Jql}", jql);
         int startAt = 0;
         int total = 0;
         var issues = new List<JiraIssue>();
 
         do
         {
-            _logger.LogDebug("Fetching page starting at {StartAt} for JQL: {Jql}", startAt, jql);
+            logger.LogDebug("Fetching page starting at {StartAt} for JQL: {Jql}", startAt, jql);
             JObject json = await CallJiraApi("search",
                 new
                 {
@@ -320,12 +315,12 @@ public class JiraClient
                 useCache: false); // since this is search no cache is required
 
             total = json.Value<int>("total");
-            _logger.LogInformation("Total issues found: {TotalIssues}", total);
+            logger.LogInformation("Total issues found: {TotalIssues}", total);
 
             // The response is an array; guard against null.
             if (json["issues"] is not JArray issueList)
             {
-                _logger.LogWarning("No 'issues' array found in the response for JQL: {Jql}, page starting at {StartAt}", jql, startAt);
+                logger.LogWarning("No 'issues' array found in the response for JQL: {Jql}, page starting at {StartAt}", jql, startAt);
                 break;
             }
 
@@ -351,13 +346,30 @@ public class JiraClient
             startAt += issueList.Count;
         } while (startAt < total);
 
-        _logger.LogInformation("Finished Jira search. Retrieved {IssueCount} issues for JQL: {Jql}", issues.Count, jql);
+        logger.LogInformation("Finished Jira search. Retrieved {IssueCount} issues for JQL: {Jql}", issues.Count, jql);
         return issues;
+    }
+
+    // Issues with their full changelog, one page per call. Jira Data Center cannot filter the changelog by
+    // field, so the whole history comes back and the caller keeps what it needs.
+    public async Task<JObject> SearchWithChangelogPage(string jql, string fields, int startAt, int maxResults)
+    {
+        return await CallJiraApi("search",
+            new
+            {
+                jql,
+                fields,
+                expand = "changelog",
+                startAt,
+                maxResults
+            },
+            timeout: 120,
+            useCache: false);
     }
 
     public async Task<List<string>> GetAllFields()
     {
-        _logger.LogInformation("Fetching all fields from Jira API");
+        logger.LogInformation("Fetching all fields from Jira API");
         var json = await CallJiraApi("field", null);
         return json.ToObject<List<string>>();
     }
@@ -365,7 +377,7 @@ public class JiraClient
     // Returns null when the issue has no fields, which is how a missing issue shows up here.
     public async Task<JiraIssue> GetIssue(string issueKey, string[] customFieldsToInclude = null, bool useCache = true)
     {
-        _logger.LogInformation("Fetching issue: {IssueKey} ...", issueKey);
+        logger.LogInformation("Fetching issue: {IssueKey} ...", issueKey);
 
         try
         {
@@ -379,7 +391,7 @@ public class JiraClient
             var fields = json["fields"];
             if (fields == null)
             {
-                _logger.LogWarning("No 'fields' object found in the response for issue: {IssueKey}", issueKey);
+                logger.LogWarning("No 'fields' object found in the response for issue: {IssueKey}", issueKey);
                 return null;
             }
 
@@ -387,7 +399,7 @@ public class JiraClient
             issue = MapJiraIssue(issue, fields, customFieldsToInclude);
 
             var parentString = string.IsNullOrEmpty(issue.ParentKey) ? "<No parent>" : issue.ParentKey;
-            _logger.LogInformation("Successfully fetched issue {IssueKey} Parent: {ParentString} {Summary}", issueKey, parentString, issue.Summary);
+            logger.LogInformation("Successfully fetched issue {IssueKey} Parent: {ParentString} {Summary}", issueKey, parentString, issue.Summary);
             return issue;
         }
         catch (Exception ex)
@@ -396,19 +408,19 @@ public class JiraClient
         }
     }
 
-    // Used by the 'changelogs' command, to see how an issue reached its
+    // TODO: not called from anywhere yet. Kept for looking at how an issue reached its
     // current state, e.g. when a status moved or an estimate was revised.
     public async Task<ChangeLogResponse> DownloadIssueHistoryAsync(string issueKey, int startAt = 0, int maxResults = 100)
     {
-        var url = $"{_settings.BaseApiUrl}/issue/{issueKey}?expand=changelog&fields=none";
-        _logger.LogInformation("Downloading changelog for issue {IssueKey} from URL: {Url}", issueKey, url);
+        var url = $"{settings.BaseApiUrl}/issue/{issueKey}?expand=changelog&fields=none";
+        logger.LogInformation("Downloading changelog for issue {IssueKey} from URL: {Url}", issueKey, url);
 
-        using var _httpClient = CreateHttpClientWithAuthHeaders(30);
-        using var response = await _httpClient.GetAsync(url);
+        using var httpClient = CreateHttpClientWithAuthHeaders(30);
+        using var response = await httpClient.GetAsync(url);
         response.EnsureSuccessStatusCode();
 
         string json = await response.Content.ReadAsStringAsync();
-        _logger.LogDebug("Received changelog response for issue {IssueKey}: {Json}", issueKey, json);
+        logger.LogDebug("Received changelog response for issue {IssueKey}: {Json}", issueKey, json);
 
         var result = JsonSerializer.Deserialize<ChangeLogResponse>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
                  ?? throw new InvalidOperationException("Failed to deserialize changelog response.");

@@ -85,7 +85,7 @@ class Program
                 break;
 
             case "changelogs":
-                logger.LogInformation("Running: download the change history of every work package");
+                logger.LogInformation("Running: download the change history of open and recently resolved project issues");
                 await new ChangelogExporter(loggerFactory, settings.Jira).ExportAsync();
                 break;
 
@@ -97,7 +97,7 @@ class Program
                 Console.WriteLine("  report            Generate HTML report from previously saved data");
                 Console.WriteLine("  all               Fetch data from Jira, generate report, and send email");
                 Console.WriteLine("  checkforupdates   Report what changed since the last fetch and email the differences");
-                Console.WriteLine("  changelogs        Download the change history of every project and scoping issue");
+                Console.WriteLine("  changelogs        Download the change history of open and recently resolved project issues");
                 Console.WriteLine("  customfieldextractor <field>");
                 Console.WriteLine("                    List the distinct values a field takes across the project query");
                 Console.WriteLine("  dumpfields [--custom]");
