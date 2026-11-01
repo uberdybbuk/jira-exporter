@@ -4,7 +4,6 @@ public static class Constants
 {
     public static readonly string RootDataDirectory = "data";
     public static readonly string ProjectInfoDirectory = Path.Combine(RootDataDirectory, "project-info");
-    public static readonly string HttpCacheDirectory = Path.Combine(RootDataDirectory, "MiniHttpCache");
 
     // Reference data kept outside 'data' because it is long-lived material consulted
     // occasionally for analysis, not part of a fetch/report run's working output.
@@ -29,7 +28,8 @@ public static class Constants
 
     public static readonly string ChangelogsFileName = Path.Combine(RootDataDirectory, "changelogs.json");
     public static readonly string ChangelogsWorkbookFileName = Path.Combine(RootDataDirectory, "changelogs.xlsx");
-    public static readonly string ChangelogBatchDirectory = Path.Combine(RootDataDirectory, "changelogs");
+    // One raw Jira issue (with its changelog) per file, named <KEY>.json.
+    public static readonly string ChangelogIssueDirectory = Path.Combine(RootDataDirectory, "changelogs");
 
     // 'changelogs' reads open projects and the ones resolved since the start of this many months ago.
     public const int ChangelogClosedMonths = 6;

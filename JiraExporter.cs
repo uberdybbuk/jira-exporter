@@ -2,53 +2,46 @@ using Microsoft.Extensions.Logging;
 
 namespace FourArc.JiraExporter;
 
-public class JiraExporter
+public class JiraExporter(ILoggerFactory loggerFactory, JiraSettings settings)
 {
-    private readonly ILogger<JiraExporter> _logger;
-    private readonly JiraClient _jiraClient;
-    private readonly ILoggerFactory _loggerFactory;
-    private readonly CompletedWorkPackages _completed;
+    private readonly JiraSettings settings = settings ?? throw new ArgumentNullException(nameof(settings));
+    private readonly ILogger<JiraExporter> logger = loggerFactory.CreateLogger<JiraExporter>();
+    private readonly JiraClient jiraClient = new(loggerFactory.CreateLogger<JiraClient>(), settings);
+    private readonly CompletedWorkPackages completed = LoadCompleted(loggerFactory.CreateLogger<JiraExporter>());
 
     // One time for the whole run, so every work package closed in it gets the same detection time.
-    private readonly DateTime _runStartedAt = DateTime.Now;
-    private readonly JiraSettings _settings;
+    private readonly DateTime runStartedAt = DateTime.Now;
 
-    public JiraExporter(ILoggerFactory loggerFactory, JiraSettings settings)
+    private static CompletedWorkPackages LoadCompleted(ILogger logger)
     {
-        _settings = settings ?? throw new ArgumentNullException(nameof(settings));
-        _loggerFactory = loggerFactory;
-        _logger = loggerFactory.CreateLogger<JiraExporter>();
-        _jiraClient = new JiraClient(_loggerFactory.CreateLogger<JiraClient>(), settings);
-
         Directory.CreateDirectory(Constants.ProjectInfoDirectory);
-        _completed = CompletedWorkPackages.Load(
-            Constants.DoneProjectsAndProposalsFileName, Constants.LegacyDoneProjectsAndProposalsFileName, _logger);
+        return CompletedWorkPackages.Load(
+            Constants.DoneProjectsAndProposalsFileName, Constants.LegacyDoneProjectsAndProposalsFileName, logger);
     }
 
-    // Project issues read in this run. A project with several scoping issues is read once;
-    // the on-disk HTTP cache is bypassed so a second fetch on the same day sees Jira's current data.
-    private readonly Dictionary<string, JiraIssue> _projectTasks = new(StringComparer.Ordinal);
+    // Project issues read in this run. A project with several scoping issues is read once.
+    private readonly Dictionary<string, JiraIssue> projectTasks = new(StringComparer.Ordinal);
 
     private async Task<JiraIssue> LoadProjectTaskAsync(string projectKey)
     {
-        if (_projectTasks.TryGetValue(projectKey, out var loaded))
+        if (projectTasks.TryGetValue(projectKey, out var loaded))
         {
             return loaded;
         }
 
         // Every field JiraIssue declares, so the single-issue fetch below returns all of them.
         var customFieldsToInclude = JiraIssue.GetCustomFields();
-        _logger.LogDebug("Additional custom fields to include: {CustomFields}", string.Join(", ", customFieldsToInclude));
+        logger.LogDebug("Additional custom fields to include: {CustomFields}", string.Join(", ", customFieldsToInclude));
 
         try
         {
-            var projectTask = await _jiraClient.GetIssue(projectKey, customFieldsToInclude, useCache: false);
-            _projectTasks[projectKey] = projectTask;
+            var projectTask = await jiraClient.GetIssue(projectKey, customFieldsToInclude);
+            projectTasks[projectKey] = projectTask;
             return projectTask;
         }
         catch (Exception e)
         {
-            _logger.LogError(e, "Failed to fetch project issue for key {ProjectKey}", projectKey);
+            logger.LogError(e, "Failed to fetch project issue for key {ProjectKey}", projectKey);
             throw;
         }
     }
@@ -63,7 +56,7 @@ public class JiraExporter
         for (int i = 0; i < proposalScopingIssues.Count; i++)
         {
             JiraIssue proposalTask = proposalScopingIssues[i];
-            _logger.LogInformation("Processing {Index}/{Total}: {Key} ...", i + 1, proposalScopingIssues.Count, proposalTask.Key);
+            logger.LogInformation("Processing {Index}/{Total}: {Key} ...", i + 1, proposalScopingIssues.Count, proposalTask.Key);
 
             try
             {
@@ -74,53 +67,53 @@ public class JiraExporter
                 // closing is delivered even if one report goes missing; then it drops out.
                 if (projectTask.IsClosed)
                 {
-                    if (_completed.MarkClosed(projectTask, proposalTask, _runStartedAt))
+                    if (completed.MarkClosed(projectTask, proposalTask, runStartedAt))
                     {
-                        _logger.LogInformation("Project {ProjectKey} is {Status}. {Key} added to the completed list.", projectTask.Key, projectTask.Status, proposalTask.Key);
+                        logger.LogInformation("Project {ProjectKey} is {Status}. {Key} added to the completed list.", projectTask.Key, projectTask.Status, proposalTask.Key);
                     }
                 }
-                else if (_completed.Remove(proposalTask.Key))
+                else if (completed.Remove(proposalTask.Key))
                 {
-                    _logger.LogInformation("Project {ProjectKey} was reopened ({Status}). {Key} removed from the completed list.", projectTask.Key, projectTask.Status, proposalTask.Key);
+                    logger.LogInformation("Project {ProjectKey} was reopened ({Status}). {Key} removed from the completed list.", projectTask.Key, projectTask.Status, proposalTask.Key);
                 }
 
                 resultList.Add(projectTaskGroup);
                 var filename = Path.Combine(Constants.ProjectInfoDirectory, $"{projectTaskGroup.UniqueId}.json");
                 await projectTaskGroup.SaveAsJsonAsync(filename);
 
-                _logger.LogInformation("Successfully processed {Key}. Project issue: {ProjectKey} file saved to {FileName}", proposalTask.Key, projectTask.Key, filename);
+                logger.LogInformation("Successfully processed {Key}. Project issue: {ProjectKey} file saved to {FileName}", proposalTask.Key, projectTask.Key, filename);
             }
             catch (Exception e)
             {
-                _logger.LogError(e, "Failed to fetch parent issue for {Key}. Parent key: {ParentKey}", proposalTask.Key, proposalTask.ParentKey);
+                logger.LogError(e, "Failed to fetch parent issue for {Key}. Parent key: {ParentKey}", proposalTask.Key, proposalTask.ParentKey);
             }
         }
 
-        _completed.Save();
-        _logger.LogInformation("Finished processing issues. Total project issues fetched: {Count}", resultList.Count);
+        completed.Save();
+        logger.LogInformation("Finished processing issues. Total project issues fetched: {Count}", resultList.Count);
 
         return resultList;
     }
 
     private async Task<List<JiraIssue>> GetProposalScopingIssuesAsync()
     {
-        var jql = _settings.ProjectQuery;
-        _logger.LogInformation("Fetching proposal scoping issues from Jira with JQL: {Jql}", jql);
+        var jql = settings.ProjectQuery;
+        logger.LogInformation("Fetching proposal scoping issues from Jira with JQL: {Jql}", jql);
 
-        List<JiraIssue> proposalScopingIssues = await _jiraClient.Search(
+        List<JiraIssue> proposalScopingIssues = await jiraClient.Search(
             jql, timeout: 20, customFieldsToInclude: ["estimation", "salesForceBudget"]);
         await proposalScopingIssues.SaveAsJsonAsync(Constants.AllProposalScopingIssuesFileName);
-        _logger.LogInformation("Fetched {Count} proposal scoping issues. Data saved to {FileName}", proposalScopingIssues.Count, Constants.AllProposalScopingIssuesFileName);
+        logger.LogInformation("Fetched {Count} proposal scoping issues. Data saved to {FileName}", proposalScopingIssues.Count, Constants.AllProposalScopingIssuesFileName);
 
         // Drop the work packages closed longer ago than the retention period.
         int allCount = proposalScopingIssues.Count;
-        proposalScopingIssues = proposalScopingIssues.Where(issue => !_completed.IsRetired(issue.Key, _runStartedAt)).ToList();
+        proposalScopingIssues = proposalScopingIssues.Where(issue => !completed.IsRetired(issue.Key, runStartedAt)).ToList();
         int activeCount = proposalScopingIssues.Count;
-        _logger.LogInformation("Filtered out work packages closed more than {Months} months ago. Before: {BeforeCount}, After: {AfterCount}",
+        logger.LogInformation("Filtered out work packages closed more than {Months} months ago. Before: {BeforeCount}, After: {AfterCount}",
             Constants.CompletedRetentionMonths, allCount, activeCount);
 
         await proposalScopingIssues.SaveAsJsonAsync(Constants.ActiveProposalScopingIssuesFileName);
-        _logger.LogInformation("Active proposal scoping issues saved to {FileName}", Constants.ActiveProposalScopingIssuesFileName);
+        logger.LogInformation("Active proposal scoping issues saved to {FileName}", Constants.ActiveProposalScopingIssuesFileName);
 
         return proposalScopingIssues;
     }
@@ -146,7 +139,7 @@ public class JiraExporter
 
         if (!File.Exists(Constants.ProjectTasksFileName))
         {
-            _logger.LogError("Snapshot '{FilePath}' not found. Run 'fetch' first to create it.", Constants.ProjectTasksFileName);
+            logger.LogError("Snapshot '{FilePath}' not found. Run 'fetch' first to create it.", Constants.ProjectTasksFileName);
             return report;
         }
 
@@ -160,37 +153,37 @@ public class JiraExporter
         // still reporting them within the retention period. Without this every one of
         // them would be reported as new or as removed depending on which ran last.
         var retained = usable
-            .Where(wp => _completed.Contains(wp.ProposalScopingTask.Key))
+            .Where(wp => completed.Contains(wp.ProposalScopingTask.Key))
             .ToList();
 
         // Keyed by work package rather than by project: one project can have several
         // scoping issues, and each carries its own estimate and budget.
         var previous = usable
-            .Where(wp => !_completed.Contains(wp.ProposalScopingTask.Key))
+            .Where(wp => !completed.Contains(wp.ProposalScopingTask.Key))
             .ToDictionary(wp => wp.UniqueId, StringComparer.Ordinal);
-        _logger.LogInformation("Loaded {Total} work packages from {FilePath}; {Tracked} tracked, {Retained} already completed.",
+        logger.LogInformation("Loaded {Total} work packages from {FilePath}; {Tracked} tracked, {Retained} already completed.",
             usable.Count, Constants.ProjectTasksFileName, previous.Count, retained.Count);
 
-        var scopingIssues = await _jiraClient.Search(
-            _settings.ProjectQuery, timeout: 20, customFieldsToInclude: ["estimation", "salesForceBudget"]);
+        var scopingIssues = await jiraClient.Search(
+            settings.ProjectQuery, timeout: 20, customFieldsToInclude: ["estimation", "salesForceBudget"]);
 
         var current = new Dictionary<string, JiraIssue>(StringComparer.Ordinal);
         foreach (var issue in scopingIssues)
         {
             if (string.IsNullOrEmpty(issue.ParentKey))
             {
-                _logger.LogWarning("Scoping issue {Key} has no parent, so it cannot form a work package.", issue.Key);
+                logger.LogWarning("Scoping issue {Key} has no parent, so it cannot form a work package.", issue.Key);
                 continue;
             }
 
-            if (_completed.Contains(issue.Key))
+            if (completed.Contains(issue.Key))
             {
                 continue;
             }
 
             current[$"{issue.ParentKey}_{issue.Key}"] = issue;
         }
-        _logger.LogInformation("The query returned {Count} work packages still being tracked.", current.Count);
+        logger.LogInformation("The query returned {Count} work packages still being tracked.", current.Count);
 
         foreach (var (uniqueId, workPackage) in previous)
         {
@@ -227,7 +220,7 @@ public class JiraExporter
             }
         }
 
-        _logger.LogInformation("{Count} work package(s) moved since the last snapshot.", toRefresh.Count);
+        logger.LogInformation("{Count} work package(s) moved since the last snapshot.", toRefresh.Count);
 
         // Work packages of the same project share a project issue; fetch each one once.
         Dictionary<string, JiraIssue> projectTasks = new(StringComparer.Ordinal);
@@ -241,18 +234,17 @@ public class JiraExporter
             {
                 try
                 {
-                    // Bypass the response cache; a day-old answer would hide the change.
-                    projectTask = await _jiraClient.GetIssue(scopingIssue.ParentKey, allCustomFields, useCache: false);
+                    projectTask = await jiraClient.GetIssue(scopingIssue.ParentKey, allCustomFields);
                 }
                 catch (Exception e)
                 {
-                    _logger.LogError(e, "Failed to fetch project issue {ProjectKey} for {UniqueId}.", scopingIssue.ParentKey, uniqueId);
+                    logger.LogError(e, "Failed to fetch project issue {ProjectKey} for {UniqueId}.", scopingIssue.ParentKey, uniqueId);
                     continue;
                 }
 
                 if (projectTask is null)
                 {
-                    _logger.LogWarning("Project issue {ProjectKey} came back without fields.", scopingIssue.ParentKey);
+                    logger.LogWarning("Project issue {ProjectKey} came back without fields.", scopingIssue.ParentKey);
                     continue;
                 }
 
@@ -272,13 +264,13 @@ public class JiraExporter
             if (changes.Count == 0)
             {
                 // The update timestamp moved, but no field we track did.
-                _logger.LogDebug("{UniqueId} was updated, but no tracked field changed.", uniqueId);
+                logger.LogDebug("{UniqueId} was updated, but no tracked field changed.", uniqueId);
                 continue;
             }
 
             foreach (var change in changes)
             {
-                _logger.LogInformation("{UniqueId} changed - {Change}", uniqueId, change);
+                logger.LogInformation("{UniqueId} changed - {Change}", uniqueId, change);
             }
 
             report.Changed.Add(new ChangedWorkPackage(workPackage, changes));
@@ -298,7 +290,7 @@ public class JiraExporter
         }
 
         await report.NextSnapshot.SaveAsJsonAsync(Constants.ProjectTasksFileName);
-        _logger.LogInformation("Snapshot updated: {Count} work packages, {RefreshedCount} of them refreshed.",
+        logger.LogInformation("Snapshot updated: {Count} work packages, {RefreshedCount} of them refreshed.",
             report.NextSnapshot.Count, report.Refreshed.Count);
     }
 
@@ -340,7 +332,7 @@ public class JiraExporter
         for (int i = 0; i < projectKeys.Count; i += BatchSize)
         {
             var batch = projectKeys.Skip(i).Take(BatchSize);
-            var issues = await _jiraClient.Search($"key in ({string.Join(", ", batch)})", timeout: 30);
+            var issues = await jiraClient.Search($"key in ({string.Join(", ", batch)})", timeout: 30);
 
             foreach (var issue in issues)
             {
@@ -351,7 +343,7 @@ public class JiraExporter
         var missingCount = projectKeys.Count - updateTimes.Count;
         if (missingCount > 0)
         {
-            _logger.LogWarning("{Count} project issue(s) were not returned by the key search.", missingCount);
+            logger.LogWarning("{Count} project issue(s) were not returned by the key search.", missingCount);
         }
 
         return updateTimes;

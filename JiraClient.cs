@@ -13,7 +13,6 @@ public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
     private readonly JiraSettings settings = settings ?? throw new ArgumentNullException(nameof(settings));
 
     private const int PageSize = 500;
-    private readonly MiniHttpCache httpCache = new();
 
     private HttpClient CreateHttpClientWithAuthHeaders(int timeout)
     {
@@ -39,26 +38,9 @@ public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
         return url;
     }
 
-    private async Task<JObject> CallJiraApi(string endpoint, object parameters = null, int timeout = 20, bool useCache = true)
+    private async Task<JObject> CallJiraApi(string endpoint, object parameters = null, int timeout = 20)
     {
         string url = CreateJiraEndpointUrl(endpoint, parameters);
-
-        if (useCache)
-        {
-            if (httpCache.TryGetFromCache(url, out string cachedResponse))
-            {
-                logger.LogDebug("Cache hit for URL: {Url}", url);
-                return JObject.Parse(cachedResponse);
-            }
-            else
-            {
-                logger.LogDebug("Cache miss for URL: {Url}", url);
-            }
-        }
-        else
-        {
-            logger.LogDebug("Cache bypassed for URL: {Url}", url);
-        }
 
         logger.LogInformation("Calling Jira API: {Url}", url);
         using HttpClient client = CreateHttpClientWithAuthHeaders(timeout);
@@ -95,7 +77,6 @@ public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
             throw new Exception("Failed to parse JSON response (resulted in null)");
         }
 
-        httpCache.AddToCache(url, content);
         return json;
     }
 
@@ -311,8 +292,7 @@ public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
                     startAt,
                     maxResults = PageSize
                 },
-                timeout,
-                useCache: false); // since this is search no cache is required
+                timeout);
 
             total = json.Value<int>("total");
             logger.LogInformation("Total issues found: {TotalIssues}", total);
@@ -350,32 +330,24 @@ public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
         return issues;
     }
 
-    // Issues with their full changelog, one page per call. Jira Data Center cannot filter the changelog by
-    // field, so the whole history comes back and the caller keeps what it needs.
-    public async Task<JObject> SearchWithChangelogPage(string jql, string fields, int startAt, int maxResults)
+    // One page of raw search results. With expand "changelog" each issue carries its full history:
+    // Jira Data Center cannot filter the changelog by field, so the caller keeps what it needs.
+    public async Task<JObject> SearchPage(string jql, string fields, string expand, int startAt, int maxResults)
     {
         return await CallJiraApi("search",
             new
             {
                 jql,
                 fields,
-                expand = "changelog",
+                expand,
                 startAt,
                 maxResults
             },
-            timeout: 120,
-            useCache: false);
-    }
-
-    public async Task<List<string>> GetAllFields()
-    {
-        logger.LogInformation("Fetching all fields from Jira API");
-        var json = await CallJiraApi("field", null);
-        return json.ToObject<List<string>>();
+            timeout: 120);
     }
 
     // Returns null when the issue has no fields, which is how a missing issue shows up here.
-    public async Task<JiraIssue> GetIssue(string issueKey, string[] customFieldsToInclude = null, bool useCache = true)
+    public async Task<JiraIssue> GetIssue(string issueKey, string[] customFieldsToInclude = null)
     {
         logger.LogInformation("Fetching issue: {IssueKey} ...", issueKey);
 
@@ -385,8 +357,7 @@ public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
                 new
                 {
                     fields = GetJiraIssueFields(customFieldsToInclude) + ",issuelinks,subtasks"
-                },
-                useCache: useCache);
+                });
 
             var fields = json["fields"];
             if (fields == null)

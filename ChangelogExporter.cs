@@ -1,7 +1,7 @@
-using System.Security.Cryptography;
-using System.Text;
+using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using Microsoft.Extensions.Logging;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace FourArc.JiraExporter;
@@ -34,14 +34,17 @@ public class FieldChange
 // Change history of the project issues, where status and phase dates live. Scoping issues are left out.
 // Only open projects and the ones resolved in the last months are read; the closed ones show the whole
 // path to production. Jira Data Center cannot filter the changelog by field, so it comes back whole and
-// the noisy fields are dropped here.
+// the noisy fields are dropped when the outputs are built.
 //
-// Issues are read in batches through search. Each batch is written to disk as soon as it arrives, so an
-// interrupted run picks up where it stopped. Delete data/changelogs to read everything again.
+// Each issue is kept raw in data/changelogs/<KEY>.json. A run first asks Jira only for each issue's
+// 'updated' time, then downloads the changelog of the issues that are new or whose 'updated' moved.
+// An interrupted run therefore resumes, and a later run costs a few light requests. The outputs are
+// always built from the files, so --offline rebuilds them without calling Jira at all.
 public class ChangelogExporter(ILoggerFactory loggerFactory, JiraSettings settings)
 {
     private const int BatchSize = 50;
     private const int MaxValueLength = 200;
+    private const string Fields = "summary,status,resolutiondate,updated";
 
     private static readonly HashSet<string> s_droppedFields = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -52,7 +55,40 @@ public class ChangelogExporter(ILoggerFactory loggerFactory, JiraSettings settin
     private readonly ILogger<ChangelogExporter> logger = loggerFactory.CreateLogger<ChangelogExporter>();
     private readonly JiraClient jiraClient = new(loggerFactory.CreateLogger<JiraClient>(), settings);
 
-    public async Task<List<ProjectChangelog>> ExportAsync()
+    public async Task<List<ProjectChangelog>> ExportAsync(bool offline)
+    {
+        Directory.CreateDirectory(Constants.ChangelogIssueDirectory);
+
+        List<string> keys;
+        if (offline)
+        {
+            // Only <KEY>.json; older runs left batch-*.json files in the same folder.
+            keys = Directory.GetFiles(Constants.ChangelogIssueDirectory, "*.json")
+                .Select(Path.GetFileNameWithoutExtension)
+                .Where(name => Regex.IsMatch(name, "^[A-Z][A-Z0-9]*-[0-9]+$"))
+                .Order(StringComparer.Ordinal)
+                .ToList();
+            logger.LogInformation("Offline: building the outputs from {Count} file(s) on disk.", keys.Count);
+        }
+        else
+        {
+            var current = await ReadUpdateTimesAsync(await ReadProjectKeysAsync());
+            var stale = current.Where(c => !IsUpToDate(c.Key, c.Value)).Select(c => c.Key).ToList();
+            logger.LogInformation("{Count} project issue(s) open or recently resolved; {Stale} new or changed since the last run.", current.Count, stale.Count);
+            await DownloadChangelogsAsync(stale);
+            keys = current.Keys.Order(StringComparer.Ordinal).ToList();
+        }
+
+        List<ProjectChangelog> results = keys.Select(key => ToProjectChangelog(ReadIssueFile(key))).ToList();
+        await results.SaveAsJsonAsync(Constants.ChangelogsFileName);
+        SaveWorkbook(results);
+        logger.LogInformation("{Count} project issue(s) written to '{Json}' and '{Xlsx}'.",
+            results.Count, Constants.ChangelogsFileName, Constants.ChangelogsWorkbookFileName);
+        return results;
+    }
+
+    // The scoping query is the entry point; its parents are the project issues.
+    private async Task<List<string>> ReadProjectKeysAsync()
     {
         var scopingIssues = await jiraClient.Search(settings.ProjectQuery, timeout: 20);
         var projectKeys = scopingIssues
@@ -61,70 +97,96 @@ public class ChangelogExporter(ILoggerFactory loggerFactory, JiraSettings settin
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToList();
-        var batches = projectKeys.Chunk(BatchSize).ToList();
-        logger.LogInformation("{ScopingCount} scoping issue(s), {ProjectCount} project issue(s), {BatchCount} batch(es).",
-            scopingIssues.Count, projectKeys.Count, batches.Count);
-
-        Directory.CreateDirectory(Constants.ChangelogBatchDirectory);
-        List<ProjectChangelog> results = [];
-        for (int i = 0; i < batches.Count; i++)
-        {
-            results.AddRange(await ReadBatchAsync(batches[i], i + 1, batches.Count));
-        }
-
-        await results.SaveAsJsonAsync(Constants.ChangelogsFileName);
-        SaveWorkbook(results);
-        logger.LogInformation("{Count} project issue(s) written to '{Json}' and '{Xlsx}'.",
-            results.Count, Constants.ChangelogsFileName, Constants.ChangelogsWorkbookFileName);
-        return results;
+        logger.LogInformation("{ScopingCount} scoping issue(s), {ProjectCount} project issue(s).", scopingIssues.Count, projectKeys.Count);
+        return projectKeys;
     }
 
-    // The file name carries a hash of the batch's keys: when the query's result changes, the batches
-    // that changed are read again and the rest come from disk.
-    private async Task<List<ProjectChangelog>> ReadBatchAsync(string[] keys, int index, int total)
+    // Light search: no changelog, only the fields needed to decide what to download.
+    private async Task<Dictionary<string, DateTime>> ReadUpdateTimesAsync(List<string> projectKeys)
     {
-        var file = Path.Combine(Constants.ChangelogBatchDirectory, $"batch-{Hash(keys)}.json");
-        if (File.Exists(file))
+        Dictionary<string, DateTime> updated = new(StringComparer.Ordinal);
+        foreach (var batch in projectKeys.Chunk(BatchSize))
         {
-            logger.LogInformation("Batch {Index}/{Total}: from disk.", index, total);
-            return await JsonHelper.FromJsonAsync<List<ProjectChangelog>>(file);
+            var jql = $"key in ({string.Join(", ", batch)}) AND (statusCategory != Done OR resolved >= startOfMonth(-{Constants.ChangelogClosedMonths}))";
+            foreach (var issue in await SearchAllAsync(jql, expand: ""))
+            {
+                updated[issue.Value<string>("key")] = issue["fields"]!.Value<DateTime>("updated");
+            }
         }
 
-        var jql = $"key in ({string.Join(", ", keys)}) AND (statusCategory != Done OR resolved >= startOfMonth(-{Constants.ChangelogClosedMonths}))";
-        List<ProjectChangelog> batch = [];
+        return updated;
+    }
+
+    private async Task DownloadChangelogsAsync(List<string> keys)
+    {
+        var batches = keys.Chunk(BatchSize).ToList();
+        for (int i = 0; i < batches.Count; i++)
+        {
+            var issues = await SearchAllAsync($"key in ({string.Join(", ", batches[i])})", expand: "changelog");
+            foreach (var issue in issues)
+            {
+                WarnIfHistoryIsCut(issue);
+                await File.WriteAllTextAsync(IssueFile(issue.Value<string>("key")), issue.ToString(Formatting.None));
+            }
+
+            logger.LogInformation("Changelogs {Index}/{Total}: {Count} issue(s) saved.", i + 1, batches.Count, issues.Count);
+        }
+    }
+
+    private async Task<List<JToken>> SearchAllAsync(string jql, string expand)
+    {
+        List<JToken> issues = [];
         int startAt = 0;
-        int found;
+        int total;
         do
         {
-            var page = await jiraClient.SearchWithChangelogPage(jql, "summary,status,resolutiondate", startAt, BatchSize);
-            found = page.Value<int>("total");
-            var issues = page["issues"] as JArray ?? [];
-            batch.AddRange(issues.Select(ToProjectChangelog));
-            if (issues.Count == 0)
+            var page = await jiraClient.SearchPage(jql, Fields, expand, startAt, BatchSize);
+            total = page.Value<int>("total");
+            var pageIssues = page["issues"] as JArray ?? [];
+            issues.AddRange(pageIssues);
+            if (pageIssues.Count == 0)
             {
                 break;
             }
 
-            startAt += issues.Count;
-        } while (startAt < found);
+            startAt += pageIssues.Count;
+        } while (startAt < total);
 
-        await batch.SaveAsJsonAsync(file);
-        logger.LogInformation("Batch {Index}/{Total}: {Count} of {KeyCount} project issue(s) open or recently resolved.",
-            index, total, batch.Count, keys.Length);
-        return batch;
+        return issues;
     }
 
-    private ProjectChangelog ToProjectChangelog(JToken issue)
+    // Compared in UTC at second precision: the file's value has been through JSON, Jira's has not.
+    private static bool IsUpToDate(string key, DateTime updated)
+    {
+        if (!File.Exists(IssueFile(key)))
+        {
+            return false;
+        }
+
+        var saved = ReadIssueFile(key)["fields"]?.Value<DateTime?>("updated");
+        return saved is not null
+            && saved.Value.ToUniversalTime().Ticks / TimeSpan.TicksPerSecond == updated.ToUniversalTime().Ticks / TimeSpan.TicksPerSecond;
+    }
+
+    private void WarnIfHistoryIsCut(JToken issue)
+    {
+        var histories = issue["changelog"]?["histories"] as JArray ?? [];
+        var total = issue["changelog"]?.Value<int?>("total") ?? histories.Count;
+        if (histories.Count < total)
+        {
+            logger.LogWarning("{Key}: got {Count} of {Total} history entries.", issue.Value<string>("key"), histories.Count, total);
+        }
+    }
+
+    private static string IssueFile(string key) => Path.Combine(Constants.ChangelogIssueDirectory, $"{key}.json");
+
+    private static JObject ReadIssueFile(string key) => JObject.Parse(File.ReadAllText(IssueFile(key)));
+
+    private static ProjectChangelog ToProjectChangelog(JToken issue)
     {
         var fields = issue["fields"];
         var histories = issue["changelog"]?["histories"] as JArray ?? [];
         var key = issue.Value<string>("key");
-
-        var historyTotal = issue["changelog"]?.Value<int?>("total") ?? histories.Count;
-        if (histories.Count < historyTotal)
-        {
-            logger.LogWarning("{Key}: got {Count} of {Total} history entries.", key, histories.Count, historyTotal);
-        }
 
         var changes = histories
             .SelectMany(h => (h["items"] as JArray ?? []).Select(item => (History: h, Item: item)))
@@ -222,11 +284,5 @@ public class ChangelogExporter(ILoggerFactory loggerFactory, JiraSettings settin
     private static string Shorten(string value)
     {
         return value is { Length: > MaxValueLength } ? value[..MaxValueLength] + "…" : value;
-    }
-
-    private static string Hash(string[] keys)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(string.Join(",", keys)));
-        return Convert.ToHexString(bytes)[..12].ToLowerInvariant();
     }
 }
