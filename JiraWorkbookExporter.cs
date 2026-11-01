@@ -182,8 +182,8 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         return projects;
     }
 
-    // Status and date field changes only. Status values are names; date values are taken raw ("2026-09-02")
-    // because Jira's display text for older entries is "6/May/24".
+    // Status and date field changes only. Status values are names; date values are taken raw ("2026-09-02",
+    // "2026-02-12 13:39:09") because Jira's display text for older entries is "6/May/24".
     private static List<FieldChange> ReadChanges(JToken changelog, HashSet<string> dateFields)
     {
         return (changelog?["histories"] as JArray ?? [])
@@ -198,8 +198,8 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
                     Changed = FormatDate(x.History["created"]),
                     Author = x.History["author"]?.Value<string>("displayName"),
                     Field = x.Field,
-                    From = isStatus ? x.Item.Value<string>("fromString") : x.Item.Value<string>("from") ?? x.Item.Value<string>("fromString"),
-                    To = isStatus ? x.Item.Value<string>("toString") : x.Item.Value<string>("to") ?? x.Item.Value<string>("toString")
+                    From = isStatus ? x.Item.Value<string>("fromString") : RawValue(x.Item["from"]) ?? x.Item.Value<string>("fromString"),
+                    To = isStatus ? x.Item.Value<string>("toString") : RawValue(x.Item["to"]) ?? x.Item.Value<string>("toString")
                 };
             })
             .OrderBy(c => c.Changed, StringComparer.Ordinal)
@@ -327,6 +327,19 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
     private static bool HasMoved(DateTime previous, DateTime current)
     {
         return previous.ToUniversalTime().Ticks / TimeSpan.TicksPerSecond != current.ToUniversalTime().Ticks / TimeSpan.TicksPerSecond;
+    }
+
+    // A date field's raw value. Date-only values stay text ("2026-09-02"); datetime values arrive as ISO text that
+    // JObject.Parse has already turned into DateTime, and reading them back as string would use the machine's
+    // culture ("02/12/2026 13:39:09"), so they are written as "yyyy-MM-dd HH:mm:ss" in local time.
+    private static string RawValue(JToken token)
+    {
+        return token?.Type switch
+        {
+            JTokenType.Date => token.Value<DateTime>().ToString("yyyy-MM-dd HH:mm:ss"),
+            JTokenType.String => token.Value<string>(),
+            _ => null
+        };
     }
 
     // JObject.Parse turns Jira's timestamps into DateTime (local time); ToString would then use the culture.

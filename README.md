@@ -82,7 +82,7 @@ It carries data only; what a status or a date means is decided by Horizon.
 | `Meta` | `ExportedAt`, `Mode` (`Full` / `Incremental`), `PreviousExportAt`, the query and row counts |
 | `Report` | One row per work package, the same columns as the Excel report |
 | `Relations` | As in the Excel report |
-| `Changes` | Status and date field history of each exported project issue (`ProjectKey`, `Changed`, `Author`, `Field`, `From`, `To`). Date fields are the ones Jira's `/field` reports as `date` or `datetime`; their values are raw (`2026-09-02`) |
+| `Changes` | Status and date field history of each exported project issue (`ProjectKey`, `Changed`, `Author`, `Field`, `From`, `To`). Date fields are the ones Jira's `/field` reports as `date` or `datetime`; their values are raw (`2026-09-02`, datetime as `2026-02-12 13:39:09`) |
 | `Removed` | Work packages in the previous export that the query no longer returns |
 
 `--full` writes every work package the query returns, closed ones included. Without it the run writes only the
