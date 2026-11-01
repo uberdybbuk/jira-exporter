@@ -349,29 +349,39 @@ public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
     // Returns null when the issue has no fields, which is how a missing issue shows up here.
     public async Task<JiraIssue> GetIssue(string issueKey, string[] customFieldsToInclude = null)
     {
+        return (await FetchIssueAsync(issueKey, customFieldsToInclude, withChangelog: false))?.Issue;
+    }
+
+    // The issue and its full change history in one request. Null when the issue has no fields.
+    public async Task<(JiraIssue Issue, JToken Changelog)?> GetIssueWithChangelog(string issueKey, string[] customFieldsToInclude = null)
+    {
+        return await FetchIssueAsync(issueKey, customFieldsToInclude, withChangelog: true);
+    }
+
+    private async Task<(JiraIssue Issue, JToken Changelog)?> FetchIssueAsync(string issueKey, string[] customFieldsToInclude, bool withChangelog)
+    {
         logger.LogInformation("Fetching issue: {IssueKey} ...", issueKey);
 
         try
         {
-            JObject json = await CallJiraApi($"issue/{issueKey}",
-                new
-                {
-                    fields = GetJiraIssueFields(customFieldsToInclude) + ",issuelinks,subtasks"
-                });
+            var fields = GetJiraIssueFields(customFieldsToInclude) + ",issuelinks,subtasks";
+            JObject json = withChangelog
+                ? await CallJiraApi($"issue/{issueKey}", new { fields, expand = "changelog" }, timeout: 60)
+                : await CallJiraApi($"issue/{issueKey}", new { fields });
 
-            var fields = json["fields"];
-            if (fields == null)
+            var fieldsJson = json["fields"];
+            if (fieldsJson == null)
             {
                 logger.LogWarning("No 'fields' object found in the response for issue: {IssueKey}", issueKey);
                 return null;
             }
 
             var issue = new JiraIssue(json["key"].ToString());
-            issue = MapJiraIssue(issue, fields, customFieldsToInclude);
+            issue = MapJiraIssue(issue, fieldsJson, customFieldsToInclude);
 
             var parentString = string.IsNullOrEmpty(issue.ParentKey) ? "<No parent>" : issue.ParentKey;
             logger.LogInformation("Successfully fetched issue {IssueKey} Parent: {ParentString} {Summary}", issueKey, parentString, issue.Summary);
-            return issue;
+            return (issue, json["changelog"]);
         }
         catch (Exception ex)
         {

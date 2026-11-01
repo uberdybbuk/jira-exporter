@@ -44,7 +44,7 @@ dotnet run -- fetch
 | `report` | Builds Excel and JSON reports from previously fetched data |
 | `all` | `fetch`, then `report`, then emails the report |
 | `checkforupdates` | Emails what changed since the last snapshot |
-| `changelogs` | Writes the change history of open and recently resolved project issues to `data/changelogs.json` and `data/changelogs.xlsx`. Each issue is kept raw in `data/changelogs/<KEY>.json` and downloaded again only when its `updated` time moves; `--offline` rebuilds the outputs from those files without calling Jira |
+| `export` | Writes everything taken from Jira to one workbook for Horizon; incremental by default, `--full` for everything (see below) |
 
 `fetch` and `report` run anywhere. `all` and `checkforupdates` send mail through
 Exchange Web Services as the signed-in Windows account, and autodiscover resolves
@@ -71,6 +71,29 @@ identity (`ProjectKey`, `Proposal Scoping Task`), timestamps that always move
 the phase dates it would duplicate), `Summary`, `Error Message`, and the relation
 counts (`Links`, `Subtasks`). That leaves status, resolution, both assignees,
 issue type, estimate, budget, the scoping issue's resolved date and the phase dates.
+
+## Export for Horizon
+
+`dotnet run -- export` writes one workbook per run to `data/exports/jira-export-<time>-<full|incremental>.xlsx`.
+It carries data only; what a status or a date means is decided by Horizon.
+
+| Sheet | Content |
+|---|---|
+| `Meta` | `ExportedAt`, `Mode` (`Full` / `Incremental`), `PreviousExportAt`, the query and row counts |
+| `Report` | One row per work package, the same columns as the Excel report |
+| `Relations` | As in the Excel report |
+| `Changes` | Status and date field history of each exported project issue (`ProjectKey`, `Changed`, `Author`, `Field`, `From`, `To`). Date fields are the ones Jira's `/field` reports as `date` or `datetime`; their values are raw (`2026-09-02`) |
+| `Removed` | Work packages in the previous export that the query no longer returns |
+
+`--full` writes every work package the query returns, closed ones included. Without it the run writes only the
+work packages whose project or scoping issue's `updated` time moved since the last export; the first run is always
+full. The reader upserts work packages and replaces a project's `Changes` rows wholesale.
+
+`data/export-state.json` records what the last export held and is written only after the workbook is saved, so an
+interrupted run loses nothing. Downloaded project issues are kept in `data/export-cache/`; a rerun reads them from
+there while their `updated` time stays the same, so an interrupted full export resumes. Every file is new and
+`PreviousExportAt` names the export before it: a reader whose last import does not match knows a file was skipped
+and should ask for `--full`.
 
 ## Field mapping
 

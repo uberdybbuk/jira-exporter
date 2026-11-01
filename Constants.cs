@@ -26,11 +26,8 @@ public static class Constants
 
     public static readonly string JiraFieldsFileName = Path.Combine(ReferenceDirectory, "jira-fields.json");
 
-    public static readonly string ChangelogsFileName = Path.Combine(RootDataDirectory, "changelogs.json");
-    public static readonly string ChangelogsWorkbookFileName = Path.Combine(RootDataDirectory, "changelogs.xlsx");
-    // One raw Jira issue (with its changelog) per file, named <KEY>.json.
-    public static readonly string ChangelogIssueDirectory = Path.Combine(RootDataDirectory, "changelogs");
-
-    // 'changelogs' reads open projects and the ones resolved since the start of this many months ago.
-    public const int ChangelogClosedMonths = 6;
+    // 'export': one timestamped workbook per run, the project issues it downloaded, and what the last export held.
+    public static readonly string ExportDirectory = Path.Combine(RootDataDirectory, "exports");
+    public static readonly string ExportCacheDirectory = Path.Combine(RootDataDirectory, "export-cache");
+    public static readonly string ExportStateFileName = Path.Combine(RootDataDirectory, "export-state.json");
 }

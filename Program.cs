@@ -84,9 +84,9 @@ class Program
                 await CheckForUpdatesAndNotify(loggerFactory, settings);
                 break;
 
-            case "changelogs":
-                logger.LogInformation("Running: download the change history of open and recently resolved project issues");
-                await new ChangelogExporter(loggerFactory, settings.Jira).ExportAsync(offline: args.Contains("--offline"));
+            case "export":
+                logger.LogInformation("Running: export everything taken from Jira to one workbook");
+                await new JiraWorkbookExporter(loggerFactory, settings.Jira).ExportAsync(full: args.Contains("--full"));
                 break;
 
             default:
@@ -97,8 +97,8 @@ class Program
                 Console.WriteLine("  report            Generate HTML report from previously saved data");
                 Console.WriteLine("  all               Fetch data from Jira, generate report, and send email");
                 Console.WriteLine("  checkforupdates   Report what changed since the last fetch and email the differences");
-                Console.WriteLine("  changelogs        Download the change history of open and recently resolved project issues");
-                Console.WriteLine("                    Only new or changed issues are downloaded; add --offline to rebuild the outputs from disk");
+                Console.WriteLine("  export [--full]   Write work packages, relations and status/date history to one workbook in data/exports");
+                Console.WriteLine("                    Incremental by default (what changed since the last export); --full writes everything");
                 Console.WriteLine("  customfieldextractor <field>");
                 Console.WriteLine("                    List the distinct values a field takes across the project query");
                 Console.WriteLine("  dumpfields [--custom]");
@@ -184,7 +184,7 @@ class Program
         return await exporter.GetActiveProjects();
     }
 
-    // Wipes the whole working data directory (project-info, changelogs, the done/cancelled
+    // Wipes the whole working data directory (project-info, exports, export state, the done/cancelled
     // list and every generated file) so the next fetch starts from a clean slate. The
     // 'reference' directory is left alone: it holds long-lived analysis material, not run output.
     private static void ResetWorkspace(ILogger<Program> logger)

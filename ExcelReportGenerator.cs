@@ -10,8 +10,16 @@ public class ExcelReportGenerator
     // browseUrl turns issue keys on the Relations sheet into links; empty leaves them as text.
     public void SaveResults(List<WorkPackage> results, string browseUrl = "")
     {
-        var columns = ReportColumns.All;
         using var workbook = new XLWorkbook();
+        AddReportSheet(workbook, results);
+        AddRelationsSheet(workbook, ReportRelations.Build(results), browseUrl);
+        workbook.SaveAs(Constants.ExcelReportFileName);
+    }
+
+    // One row per work package with the report columns. Also used by the 'export' workbook.
+    public static void AddReportSheet(XLWorkbook workbook, List<WorkPackage> results)
+    {
+        var columns = ReportColumns.All;
         var worksheet = workbook.Worksheets.Add("Report");
 
         for (int col = 0; col < columns.Count; col++)
@@ -60,16 +68,12 @@ public class ExcelReportGenerator
         worksheet.Columns().AdjustToContents();
 
         worksheet.RangeUsed()?.SetAutoFilter();
-
-        AddRelationsSheet(workbook, ReportRelations.Build(results), browseUrl);
-
-        workbook.SaveAs(Constants.ExcelReportFileName);
     }
 
     // One row per relation, so relations can be filtered and pivoted rather than read
     // out of a crowded cell on the main sheet. Every value is written as text and a
     // missing one leaves the cell blank, so an export to CSV reads back unchanged.
-    private static void AddRelationsSheet(XLWorkbook workbook, List<RelationRow> relations, string browseUrl)
+    public static void AddRelationsSheet(XLWorkbook workbook, List<RelationRow> relations, string browseUrl)
     {
         var columns = ReportRelations.Columns;
         var worksheet = workbook.Worksheets.Add("Relations");
