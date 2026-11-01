@@ -26,4 +26,7 @@ public static class Constants
     public static readonly string JsonReportFileName = Path.Combine(RootDataDirectory, "results.json");
 
     public static readonly string JiraFieldsFileName = Path.Combine(ReferenceDirectory, "jira-fields.json");
+
+    public static readonly string ChangelogsFileName = Path.Combine(RootDataDirectory, "changelogs.json");
+    public static readonly string ChangelogsWorkbookFileName = Path.Combine(RootDataDirectory, "changelogs.xlsx");
 }
