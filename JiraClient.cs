@@ -43,6 +43,7 @@ public class JiraClient(ILogger<JiraClient> logger, JiraSettings settings)
         string url = CreateJiraEndpointUrl(endpoint, parameters);
 
         logger.LogInformation("Calling Jira API: {Url}", url);
+        await Task.Delay(settings.RequestDelayMs);
         using HttpClient client = CreateHttpClientWithAuthHeaders(timeout);
         using HttpResponseMessage response = await client.GetAsync(url);
 

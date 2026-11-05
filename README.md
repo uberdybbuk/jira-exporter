@@ -92,6 +92,8 @@ the daily file. `--full` writes every work package the query returns, for the fi
 carries over between runs, so a lost file is made good by the next one. The reader upserts work packages and replaces a
 project's `Changes` rows wholesale. A project missing from the file is not touched.
 
+`--delay-ms <n>` waits that many milliseconds before each Jira request (default 0), to go easy on the server.
+
 Downloaded project issues are kept in `data/export-cache/`; a rerun reads them from there while their `updated` time
 stays the same, so a rerun only downloads what changed.
 

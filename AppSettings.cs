@@ -112,6 +112,9 @@ public class JiraSettings
     public string Username { get; set; }
     public string Password { get; set; }
 
+    // Wait before each Jira request, from --delay-ms. Not read from the settings files.
+    public int RequestDelayMs { get; set; }
+
     // JQL selecting the scoping issues to export.
     public string ProjectQuery { get; set; }
 

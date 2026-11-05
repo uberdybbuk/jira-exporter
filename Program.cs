@@ -38,6 +38,19 @@ class Program
             return;
         }
 
+        var delayIndex = Array.IndexOf(args, "--delay-ms");
+        if (delayIndex >= 0)
+        {
+            if (delayIndex + 1 >= args.Length || !int.TryParse(args[delayIndex + 1], out var delayMs) || delayMs < 0)
+            {
+                logger.LogError("--delay-ms needs a number of milliseconds, 0 or more.");
+                Log.CloseAndFlush();
+                return;
+            }
+
+            settings.Jira.RequestDelayMs = delayMs;
+        }
+
         var command = args.Length > 0 ? args[0].ToLowerInvariant() : "";
         switch (command)
         {
@@ -99,10 +112,11 @@ class Program
                 Console.WriteLine("  report            Generate HTML report from previously saved data");
                 Console.WriteLine("  all               Fetch data from Jira, generate report, and send email");
                 Console.WriteLine("  checkforupdates   Report what changed since the last fetch and email the differences");
-                Console.WriteLine("  export [--full] [--send-email]");
+                Console.WriteLine("  export [--full] [--send-email] [--delay-ms <n>]");
                 Console.WriteLine("                    Write work packages, relations and status/date history to one workbook in data/exports");
                 Console.WriteLine("                    Open projects and the ones closed in the last 14 days; --full writes everything");
                 Console.WriteLine("                    --send-email mails the workbook to Email.ExportRecipient");
+                Console.WriteLine("                    --delay-ms waits n ms before each Jira request (default 0); works with every command");
                 Console.WriteLine("  customfieldextractor <field>");
                 Console.WriteLine("                    List the distinct values a field takes across the project query");
                 Console.WriteLine("  dumpfields [--custom]");
