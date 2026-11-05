@@ -1,3 +1,4 @@
+using System.Net.Mail;
 using System.Text.Json;
 
 namespace FourArc.JiraExporter;
@@ -51,9 +52,9 @@ public class AppSettings
         target.Jira.Username = Pick(source.Jira.Username, target.Jira.Username);
         target.Jira.Password = Pick(source.Jira.Password, target.Jira.Password);
         target.Jira.ProjectQuery = Pick(source.Jira.ProjectQuery, target.Jira.ProjectQuery);
-        target.Email.AutodiscoverAddress = Pick(source.Email.AutodiscoverAddress, target.Email.AutodiscoverAddress);
-        target.Email.ReportRecipient = Pick(source.Email.ReportRecipient, target.Email.ReportRecipient);
-        target.Email.ExportRecipient = Pick(source.Email.ExportRecipient, target.Email.ExportRecipient);
+        target.Email.From = Pick(source.Email.From, target.Email.From);
+        target.Email.To = Pick(source.Email.To, target.Email.To);
+        target.Email.Cc = Pick(source.Email.Cc, target.Email.Cc);
 
         foreach (var (name, value) in source.Jira.Fields)
         {
@@ -73,9 +74,9 @@ public class AppSettings
         settings.Jira.Username = Env("JIRA_USERNAME") ?? settings.Jira.Username;
         settings.Jira.Password = Env("JIRA_PASSWORD") ?? settings.Jira.Password;
         settings.Jira.ProjectQuery = Env("JIRA_PROJECT_QUERY") ?? settings.Jira.ProjectQuery;
-        settings.Email.AutodiscoverAddress = Env("EMAIL_AUTODISCOVER_ADDRESS") ?? settings.Email.AutodiscoverAddress;
-        settings.Email.ReportRecipient = Env("EMAIL_REPORT_RECIPIENT") ?? settings.Email.ReportRecipient;
-        settings.Email.ExportRecipient = Env("EMAIL_EXPORT_RECIPIENT") ?? settings.Email.ExportRecipient;
+        settings.Email.From = Env("EMAIL_FROM") ?? settings.Email.From;
+        settings.Email.To = Env("EMAIL_TO") ?? settings.Email.To;
+        settings.Email.Cc = Env("EMAIL_CC") ?? settings.Email.Cc;
 
         static string Env(string name)
         {
@@ -134,11 +135,35 @@ public class JiraSettings
 
 public class EmailSettings
 {
-    // Address Exchange autodiscover resolves the mailbox from.
-    public string AutodiscoverAddress { get; set; }
+    // The signed-in Windows account's address; Exchange autodiscover finds the server from it.
+    public string From { get; set; }
 
-    public string ReportRecipient { get; set; }
+    // One address, or several separated by ';' or ','.
+    public string To { get; set; }
+    public string Cc { get; set; }
 
-    // Mailbox Horizon reads the export workbooks from (export --send-email).
-    public string ExportRecipient { get; set; }
+    public List<string> ToAddresses => Split(To);
+    public List<string> CcAddresses => Split(Cc);
+
+    // Returns what is wrong with the settings, or null when mail can be sent.
+    public string FindProblem()
+    {
+        if (string.IsNullOrWhiteSpace(From))
+        {
+            return "Email.From is empty. Set it in appsettings.local.json.";
+        }
+
+        if (ToAddresses.Count == 0)
+        {
+            return "Email.To is empty. Set it in appsettings.local.json.";
+        }
+
+        var invalid = ToAddresses.Concat(CcAddresses).Append(From.Trim())
+            .Where(address => !MailAddress.TryCreate(address, out _))
+            .ToList();
+        return invalid.Count > 0 ? $"Not a valid email address in the Email settings: {string.Join(", ", invalid)}" : null;
+    }
+
+    private static List<string> Split(string addresses) =>
+        (addresses ?? "").Split([';', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 }

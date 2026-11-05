@@ -52,6 +52,17 @@ class Program
         }
 
         var command = args.Length > 0 ? args[0].ToLowerInvariant() : "";
+
+        // Checked before Jira is read, so a wrong address does not cost a long download.
+        var sendsMail = command is "all" or "checkforupdates" || (command == "export" && args.Contains("--send-email"));
+        var mailProblem = sendsMail ? settings.Email.FindProblem() : null;
+        if (mailProblem is not null)
+        {
+            logger.LogError("{Message}", mailProblem);
+            Log.CloseAndFlush();
+            return;
+        }
+
         switch (command)
         {
             case "fetch":
@@ -72,9 +83,7 @@ class Program
                 logger.LogInformation("Running: fetch data from Jira and generate Excel & HTML report");
                 await FetchProposalScopingIssues(loggerFactory, settings);
                 GenerateReport(logger, settings.Jira);
-                ExchangeEmailService.SendWithAttachment(
-                    settings.Email.ReportRecipient, "Jira projeleri", "Ektedir.",
-                    Constants.ExcelReportFileName, settings.Email.AutodiscoverAddress);
+                ExchangeEmailService.TrySend(settings.Email, logger, "Jira projeleri", "Ektedir.", Constants.ExcelReportFileName);
                 break;
 
             case "customfieldextractor":
@@ -115,7 +124,7 @@ class Program
                 Console.WriteLine("  export [--full] [--send-email] [--delay-ms <n>]");
                 Console.WriteLine("                    Write work packages, relations and status/date history to one workbook in data/exports");
                 Console.WriteLine("                    Open projects and the ones closed in the last 14 days; --full writes everything");
-                Console.WriteLine("                    --send-email mails the workbook to Email.ExportRecipient");
+                Console.WriteLine("                    --send-email mails the workbook to Email.To and Email.Cc");
                 Console.WriteLine("                    --delay-ms waits n ms before each Jira request (default 0); works with every command");
                 Console.WriteLine("  customfieldextractor <field>");
                 Console.WriteLine("                    List the distinct values a field takes across the project query");
@@ -186,14 +195,11 @@ class Program
         }
 
         // The report goes in the mail body, not in an attachment.
-        ExchangeEmailService.SendHtml(
-            settings.Email.ReportRecipient,
-            report.Subject,
-            ChangeReportHtml.Render(report, settings.Jira.BaseApiUrl),
-            settings.Email.AutodiscoverAddress);
-        logger.LogInformation("Sent '{Subject}' to {Recipient}", report.Subject, settings.Email.ReportRecipient);
-
-        await exporter.CommitSnapshotAsync(report);
+        var html = ChangeReportHtml.Render(report, settings.Jira.BaseApiUrl);
+        if (ExchangeEmailService.TrySend(settings.Email, logger, report.Subject, html))
+        {
+            await exporter.CommitSnapshotAsync(report);
+        }
     }
 
     private static async Task<List<WorkPackage>> FetchProposalScopingIssues(ILoggerFactory loggerFactory, AppSettings settings)

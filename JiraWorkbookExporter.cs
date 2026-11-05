@@ -49,12 +49,9 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
 
     public async Task ExportAsync(bool full, EmailSettings sendTo = null)
     {
-        // Checked first: a missing address or template should stop the run, not surface after a long download.
         string emailTemplate = null;
         if (sendTo is not null)
         {
-            ArgumentException.ThrowIfNullOrWhiteSpace(sendTo.ExportRecipient, "Email.ExportRecipient");
-            ArgumentException.ThrowIfNullOrWhiteSpace(sendTo.AutodiscoverAddress, "Email.AutodiscoverAddress");
             emailTemplate = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, EmailTemplateFileName));
         }
 
@@ -85,8 +82,7 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         if (sendTo is not null)
         {
             var html = FillEmailTemplate(emailTemplate, file, full, startedAt, workPackages.Count);
-            ExchangeEmailService.SendHtmlWithAttachment(sendTo.ExportRecipient, Path.GetFileName(file), html, file, sendTo.AutodiscoverAddress);
-            logger.LogInformation("Sent '{File}' to {Recipient}", Path.GetFileName(file), sendTo.ExportRecipient);
+            ExchangeEmailService.TrySend(sendTo, logger, Path.GetFileName(file), html, file);
         }
 
         logger.LogInformation("Wrote '{File}': {WorkPackages} work package(s). Failed project issue(s): {Failed}.",

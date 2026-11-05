@@ -18,17 +18,19 @@ Create `appsettings.local.json` in the project directory. The file is gitignored
         }
     },
     "Email": {
-        "AutodiscoverAddress": "user@example.com",
-        "ReportRecipient": "recipient@example.com",
-        "ExportRecipient": "horizon-inbox@example.com"
+        "From": "user@example.com",
+        "To": "first@example.com;second@example.com",
+        "Cc": ""
     }
 }
 ```
 
+`From` is the signed-in Windows account's address. `To` and `Cc` take one address, or several separated by `;` or `,`.
+Every mail the program sends goes to them. Commands that send mail check these settings before reading Jira.
+
 Settings are read in order: template, then the local file, then environment
 variables — `JIRA_USERNAME`, `JIRA_PASSWORD`, `JIRA_BASE_API_URL`,
-`JIRA_PROJECT_QUERY`, `EMAIL_AUTODISCOVER_ADDRESS`,
-`EMAIL_REPORT_RECIPIENT`, `EMAIL_EXPORT_RECIPIENT`. If a required setting is missing the program says which
+`JIRA_PROJECT_QUERY`, `EMAIL_FROM`, `EMAIL_TO`, `EMAIL_CC`. If a required setting is missing the program says which
 one and exits.
 
 Then:
@@ -76,8 +78,8 @@ issue type, estimate, budget, the scoping issue's resolved date and the phase da
 ## Export for Horizon
 
 `dotnet run -- export` writes one workbook per run to `data/exports/projects-<time>-<full|active>.xlsx`.
-`--send-email` also mails it to `Email.ExportRecipient` through Exchange (Windows only), with `export-email.html` as the
-body.
+`--send-email` also mails it to `Email.To` and `Email.Cc` through Exchange (Windows only), with `export-email.html` as the
+body. If the send fails, the program says why in one line and the file stays on disk.
 It carries data only; what a status or a date means is decided by Horizon.
 
 | Sheet | Content |
