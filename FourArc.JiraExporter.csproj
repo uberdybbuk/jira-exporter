@@ -9,6 +9,7 @@
   <ItemGroup>
     <!-- Settings are copied to the output folder; the local file overrides the template. -->
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="export-email.html" CopyToOutputDirectory="PreserveNewest" />
     <None Update="appsettings.local.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('appsettings.local.json')" />
   </ItemGroup>
 

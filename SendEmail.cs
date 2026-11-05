@@ -44,6 +44,15 @@ public class ExchangeEmailService
         email.Attachments.AddFileAttachment(attachmentPath);
         email.SendAndSaveCopy();
     }
+    public void SendHtmlEmailWithAttachment(string to, string subject, string html, string attachmentPath)
+    {
+        var email = new EmailMessage(_service);
+        email.ToRecipients.Add(to);
+        email.Subject = subject;
+        email.Body = new MessageBody(BodyType.HTML, html);
+        email.Attachments.AddFileAttachment(attachmentPath);
+        email.SendAndSaveCopy();
+    }
     public static void Send(string to, string subject, string body, string autodiscoverEmail)
     {
         var emailService = new ExchangeEmailService(autodiscoverEmail);
@@ -53,6 +62,11 @@ public class ExchangeEmailService
     {
         var emailService = new ExchangeEmailService(autodiscoverEmail);
         emailService.SendHtmlEmail(to, subject, html);
+    }
+    public static void SendHtmlWithAttachment(string to, string subject, string html, string attachmentPath, string autodiscoverEmail)
+    {
+        var emailService = new ExchangeEmailService(autodiscoverEmail);
+        emailService.SendHtmlEmailWithAttachment(to, subject, html, attachmentPath);
     }
     public static void SendWithAttachment(string to, string subject, string body, string attachmentPath, string autodiscoverEmail)
     {

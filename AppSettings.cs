@@ -53,6 +53,7 @@ public class AppSettings
         target.Jira.ProjectQuery = Pick(source.Jira.ProjectQuery, target.Jira.ProjectQuery);
         target.Email.AutodiscoverAddress = Pick(source.Email.AutodiscoverAddress, target.Email.AutodiscoverAddress);
         target.Email.ReportRecipient = Pick(source.Email.ReportRecipient, target.Email.ReportRecipient);
+        target.Email.ExportRecipient = Pick(source.Email.ExportRecipient, target.Email.ExportRecipient);
 
         foreach (var (name, value) in source.Jira.Fields)
         {
@@ -74,6 +75,7 @@ public class AppSettings
         settings.Jira.ProjectQuery = Env("JIRA_PROJECT_QUERY") ?? settings.Jira.ProjectQuery;
         settings.Email.AutodiscoverAddress = Env("EMAIL_AUTODISCOVER_ADDRESS") ?? settings.Email.AutodiscoverAddress;
         settings.Email.ReportRecipient = Env("EMAIL_REPORT_RECIPIENT") ?? settings.Email.ReportRecipient;
+        settings.Email.ExportRecipient = Env("EMAIL_EXPORT_RECIPIENT") ?? settings.Email.ExportRecipient;
 
         static string Env(string name)
         {
@@ -133,4 +135,7 @@ public class EmailSettings
     public string AutodiscoverAddress { get; set; }
 
     public string ReportRecipient { get; set; }
+
+    // Mailbox Horizon reads the export workbooks from (export --send-email).
+    public string ExportRecipient { get; set; }
 }

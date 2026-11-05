@@ -19,7 +19,8 @@ Create `appsettings.local.json` in the project directory. The file is gitignored
     },
     "Email": {
         "AutodiscoverAddress": "user@example.com",
-        "ReportRecipient": "recipient@example.com"
+        "ReportRecipient": "recipient@example.com",
+        "ExportRecipient": "horizon-inbox@example.com"
     }
 }
 ```
@@ -27,7 +28,7 @@ Create `appsettings.local.json` in the project directory. The file is gitignored
 Settings are read in order: template, then the local file, then environment
 variables — `JIRA_USERNAME`, `JIRA_PASSWORD`, `JIRA_BASE_API_URL`,
 `JIRA_PROJECT_QUERY`, `EMAIL_AUTODISCOVER_ADDRESS`,
-`EMAIL_REPORT_RECIPIENT`. If a required setting is missing the program says which
+`EMAIL_REPORT_RECIPIENT`, `EMAIL_EXPORT_RECIPIENT`. If a required setting is missing the program says which
 one and exits.
 
 Then:
@@ -44,7 +45,7 @@ dotnet run -- fetch
 | `report` | Builds Excel and JSON reports from previously fetched data |
 | `all` | `fetch`, then `report`, then emails the report |
 | `checkforupdates` | Emails what changed since the last snapshot |
-| `export` | Writes everything taken from Jira to one workbook for Horizon; incremental by default, `--full` for everything (see below) |
+| `export` | Writes everything taken from Jira to one workbook for Horizon; incremental by default, `--full` for everything, `--send-email` to mail it (see below) |
 
 `fetch` and `report` run anywhere. `all` and `checkforupdates` send mail through
 Exchange Web Services as the signed-in Windows account, and autodiscover resolves
@@ -74,7 +75,9 @@ issue type, estimate, budget, the scoping issue's resolved date and the phase da
 
 ## Export for Horizon
 
-`dotnet run -- export` writes one workbook per run to `data/exports/jira-export-<time>-<full|incremental>.xlsx`.
+`dotnet run -- export` writes one workbook per run to `data/exports/projects-<time>-<full|incremental>.xlsx`.
+`--send-email` also mails it to `Email.ExportRecipient` through Exchange (Windows only), with `export-email.html` as the
+body. The state is saved after the mail, so a failed mail is exported again on the next run.
 It carries data only; what a status or a date means is decided by Horizon.
 
 | Sheet | Content |

@@ -46,12 +46,21 @@ public class FieldChange
 public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings settings)
 {
     private const int KeyBatchSize = 100;
+    private const string EmailTemplateFileName = "export-email.html";
 
     private readonly ILogger<JiraWorkbookExporter> logger = loggerFactory.CreateLogger<JiraWorkbookExporter>();
     private readonly JiraClient jiraClient = new(loggerFactory.CreateLogger<JiraClient>(), settings);
 
-    public async Task ExportAsync(bool full)
+    public async Task ExportAsync(bool full, EmailSettings sendTo = null)
     {
+        // Checked first: a missing address or template should stop the run, not surface after a long download.
+        string emailTemplate = null;
+        if (sendTo is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(sendTo.ExportRecipient, "Email.ExportRecipient");
+            emailTemplate = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, EmailTemplateFileName));
+        }
+
         var startedAt = DateTime.Now;
         var previous = File.Exists(Constants.ExportStateFileName)
             ? await JsonHelper.FromJsonAsync<ExportState>(Constants.ExportStateFileName)
@@ -88,9 +97,29 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         List<string> removed = full ? [] : previous.WorkPackages.Where(id => !current.Contains(id)).ToList();
 
         var file = SaveWorkbook(full, startedAt, previous.ExportedAt, workPackages, projects, removed);
+        // Sent before the state is saved: if the mail fails the next run exports these changes again.
+        if (sendTo is not null)
+        {
+            var html = FillEmailTemplate(emailTemplate, file, full, startedAt, previous.ExportedAt, workPackages.Count, removed.Count);
+            ExchangeEmailService.SendHtmlWithAttachment(sendTo.ExportRecipient, Path.GetFileName(file), html, file, sendTo.AutodiscoverAddress);
+            logger.LogInformation("Sent '{File}' to {Recipient}", Path.GetFileName(file), sendTo.ExportRecipient);
+        }
+
         await SaveStateAsync(previous, full, startedAt, workPackages, projects, current);
         logger.LogInformation("Wrote '{File}': {WorkPackages} work package(s), {Removed} removed. Failed project issue(s): {Failed}.",
             file, workPackages.Count, removed.Count, changed.Count(s => !projects.ContainsKey(s.ParentKey)));
+    }
+
+    private static string FillEmailTemplate(string template, string file, bool full, DateTime startedAt, DateTime? previousExportAt, int workPackages, int removed)
+    {
+        const string TimeFormat = "dd.MM.yyyy HH:mm:ss";
+        return template
+            .Replace("{{FileName}}", System.Net.WebUtility.HtmlEncode(Path.GetFileName(file)))
+            .Replace("{{Mode}}", full ? "Full" : "Incremental")
+            .Replace("{{ExportedAt}}", startedAt.ToString(TimeFormat))
+            .Replace("{{PreviousExportAt}}", !full && previousExportAt is DateTime previous ? previous.ToString(TimeFormat) : "-")
+            .Replace("{{WorkPackageCount}}", workPackages.ToString())
+            .Replace("{{RemovedCount}}", removed.ToString());
     }
 
     // Names and ids of the date and datetime fields; their changes go to the Changes sheet with the status.
@@ -230,7 +259,7 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         AddRemovedSheet(workbook, removed);
 
         Directory.CreateDirectory(Constants.ExportDirectory);
-        var file = Path.Combine(Constants.ExportDirectory, $"jira-export-{startedAt:yyyyMMdd-HHmmss}-{(full ? "full" : "incremental")}.xlsx");
+        var file = Path.Combine(Constants.ExportDirectory, $"projects-{startedAt:yyyyMMdd-HHmmss}-{(full ? "full" : "incremental")}.xlsx");
         workbook.SaveAs(file);
         return file;
     }

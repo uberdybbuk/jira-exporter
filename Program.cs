@@ -86,7 +86,9 @@ class Program
 
             case "export":
                 logger.LogInformation("Running: export everything taken from Jira to one workbook");
-                await new JiraWorkbookExporter(loggerFactory, settings.Jira).ExportAsync(full: args.Contains("--full"));
+                await new JiraWorkbookExporter(loggerFactory, settings.Jira).ExportAsync(
+                    full: args.Contains("--full"),
+                    sendTo: args.Contains("--send-email") ? settings.Email : null);
                 break;
 
             default:
@@ -97,8 +99,10 @@ class Program
                 Console.WriteLine("  report            Generate HTML report from previously saved data");
                 Console.WriteLine("  all               Fetch data from Jira, generate report, and send email");
                 Console.WriteLine("  checkforupdates   Report what changed since the last fetch and email the differences");
-                Console.WriteLine("  export [--full]   Write work packages, relations and status/date history to one workbook in data/exports");
+                Console.WriteLine("  export [--full] [--send-email]");
+                Console.WriteLine("                    Write work packages, relations and status/date history to one workbook in data/exports");
                 Console.WriteLine("                    Incremental by default (what changed since the last export); --full writes everything");
+                Console.WriteLine("                    --send-email mails the workbook to Email.ExportRecipient");
                 Console.WriteLine("  customfieldextractor <field>");
                 Console.WriteLine("                    List the distinct values a field takes across the project query");
                 Console.WriteLine("  dumpfields [--custom]");
