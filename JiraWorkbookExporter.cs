@@ -54,6 +54,7 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         if (sendTo is not null)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(sendTo.ExportRecipient, "Email.ExportRecipient");
+            ArgumentException.ThrowIfNullOrWhiteSpace(sendTo.AutodiscoverAddress, "Email.AutodiscoverAddress");
             emailTemplate = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, EmailTemplateFileName));
         }
 
