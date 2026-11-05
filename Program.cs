@@ -101,7 +101,7 @@ class Program
                 Console.WriteLine("  checkforupdates   Report what changed since the last fetch and email the differences");
                 Console.WriteLine("  export [--full] [--send-email]");
                 Console.WriteLine("                    Write work packages, relations and status/date history to one workbook in data/exports");
-                Console.WriteLine("                    Incremental by default (what changed since the last export); --full writes everything");
+                Console.WriteLine("                    Open projects and the ones closed in the last 14 days; --full writes everything");
                 Console.WriteLine("                    --send-email mails the workbook to Email.ExportRecipient");
                 Console.WriteLine("  customfieldextractor <field>");
                 Console.WriteLine("                    List the distinct values a field takes across the project query");
@@ -188,7 +188,7 @@ class Program
         return await exporter.GetActiveProjects();
     }
 
-    // Wipes the whole working data directory (project-info, exports, export state, the done/cancelled
+    // Wipes the whole working data directory (project-info, exports, the done/cancelled
     // list and every generated file) so the next fetch starts from a clean slate. The
     // 'reference' directory is left alone: it holds long-lived analysis material, not run output.
     private static void ResetWorkspace(ILogger<Program> logger)

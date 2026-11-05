@@ -20,6 +20,9 @@ public static class Constants
     // How long a closed work package keeps being fetched and reported after it was detected.
     public const int CompletedRetentionMonths = 2;
 
+    // A project closed this many days ago is still in the daily export, so a few lost files do not hide its closing.
+    public const int ActiveExportClosedDays = 14;
+
     public static readonly string HtmlReportFileName = Path.Combine(RootDataDirectory, "results.html");
     public static readonly string ExcelReportFileName = Path.Combine(RootDataDirectory, "results-excel.xlsx");
     public static readonly string JsonReportFileName = Path.Combine(RootDataDirectory, "results.json");
@@ -29,5 +32,4 @@ public static class Constants
     // 'export': one timestamped workbook per run, the project issues it downloaded, and what the last export held.
     public static readonly string ExportDirectory = Path.Combine(RootDataDirectory, "exports");
     public static readonly string ExportCacheDirectory = Path.Combine(RootDataDirectory, "export-cache");
-    public static readonly string ExportStateFileName = Path.Combine(RootDataDirectory, "export-state.json");
 }

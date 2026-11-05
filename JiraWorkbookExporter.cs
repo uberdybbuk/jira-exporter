@@ -4,17 +4,6 @@ using Newtonsoft.Json.Linq;
 
 namespace FourArc.JiraExporter;
 
-// What the last completed export contained: the 'updated' time of every project and scoping issue it wrote.
-// Written only after the workbook is saved, so an interrupted or failed run leaves the next one to report the
-// same changes.
-public class ExportState
-{
-    public DateTime? ExportedAt { get; set; }
-    public Dictionary<string, DateTime> Projects { get; set; } = [];
-    public Dictionary<string, DateTime> Scopings { get; set; } = [];
-    public List<string> WorkPackages { get; set; } = [];
-}
-
 // A project issue as downloaded, with its status and date field changes. Kept on disk so an interrupted run
 // does not download it again while its 'updated' time stays the same.
 public class ProjectSnapshot
@@ -22,6 +11,15 @@ public class ProjectSnapshot
     public DateTime Updated { get; set; }
     public JiraIssue Issue { get; set; }
     public List<FieldChange> Changes { get; set; } = [];
+}
+
+// What the light search returns for a project issue. A cancelled issue may have no resolution date; its last update
+// stands in, which at worst keeps it in the file a little longer.
+public record ProjectActivity(DateTime Updated, string Status, string StatusCategory, DateTime? Resolved)
+{
+    private bool IsClosed => StatusCategory == "done" || Status is "Done" or "Cancelled";
+
+    public bool IsActiveSince(DateTime closedSince) => !IsClosed || (Resolved ?? Updated) >= closedSince;
 }
 
 public class FieldChange
@@ -35,14 +33,12 @@ public class FieldChange
     public string To { get; set; }
 }
 
-// Everything taken from Jira in one workbook for Horizon: Meta, Report (work packages), Relations, Changes
-// (status and date field history of the project issues) and Removed. Only data: what a status or a date means
-// is decided by Horizon.
+// Everything taken from Jira in one workbook for Horizon: Meta, Report (work packages), Relations and Changes (status
+// and date field history of the project issues). Only data: what a status or a date means is decided by Horizon.
 //
-// Full writes every work package the query returns, closed ones included. Incremental writes the work packages
-// whose project or scoping issue changed since the last export, plus the ones that left the query. Each run
-// writes a new timestamped file and Meta carries the previous export's time, so the reader can tell when a file
-// in between was skipped.
+// Every file stands on its own, nothing depends on an earlier run: a lost file is made good by the next one. Active,
+// the daily file, holds the open projects and the ones closed in the last few days, so Horizon also sees a project
+// close. Full holds everything the query returns and is for the first load or after a long gap.
 public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings settings)
 {
     private const int KeyBatchSize = 100;
@@ -62,64 +58,47 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         }
 
         var startedAt = DateTime.Now;
-        var previous = File.Exists(Constants.ExportStateFileName)
-            ? await JsonHelper.FromJsonAsync<ExportState>(Constants.ExportStateFileName)
-            : new ExportState();
-        if (!full && previous.ExportedAt is null)
-        {
-            logger.LogInformation("No previous export found; running a full export.");
-            full = true;
-        }
-
         var dateFields = await ReadDateFieldsAsync();
         var scopings = await jiraClient.Search(settings.ProjectQuery, timeout: 20, customFieldsToInclude: ["estimation", "salesForceBudget"]);
         var withParent = scopings.Where(s => !string.IsNullOrEmpty(s.ParentKey)).ToList();
-        var projectUpdated = await ReadUpdateTimesAsync(withParent.Select(s => s.ParentKey).Distinct().ToList());
-        var unreadable = withParent.Where(s => !projectUpdated.ContainsKey(s.ParentKey)).Select(s => s.ParentKey).Distinct().ToList();
+        var activity = await ReadProjectActivityAsync(withParent.Select(s => s.ParentKey).Distinct().ToList());
+        var unreadable = withParent.Where(s => !activity.ContainsKey(s.ParentKey)).Select(s => s.ParentKey).Distinct().ToList();
         if (unreadable.Count > 0)
         {
-            // Retried next time: they stay out of the state, so they still count as changed.
             logger.LogWarning("{Count} project issue(s) did not come back from the key search: {Keys}", unreadable.Count, string.Join(", ", unreadable));
         }
 
-        var changed = withParent
-            .Where(s => projectUpdated.ContainsKey(s.ParentKey))
-            .Where(s => full || HasMoved(previous.Scopings, s.Key, s.Updated) || HasMoved(previous.Projects, s.ParentKey, projectUpdated[s.ParentKey]))
+        var closedSince = startedAt.AddDays(-Constants.ActiveExportClosedDays);
+        var selected = withParent
+            .Where(s => activity.TryGetValue(s.ParentKey, out var project) && (full || project.IsActiveSince(closedSince)))
             .ToList();
-        logger.LogInformation("{Mode}: {Changed} of {Total} work package(s) to export.", full ? "Full" : "Incremental", changed.Count, withParent.Count);
+        logger.LogInformation("{Mode}: {Selected} of {Total} work package(s) to export.", full ? "Full" : "Active", selected.Count, withParent.Count);
 
-        var projects = await LoadProjectsAsync(changed.Select(s => s.ParentKey).Distinct().ToList(), projectUpdated, dateFields);
-        var workPackages = changed
+        var projects = await LoadProjectsAsync(selected.Select(s => s.ParentKey).Distinct().ToList(), activity, dateFields);
+        var workPackages = selected
             .Where(s => projects.ContainsKey(s.ParentKey))
             .Select(s => new WorkPackage(projects[s.ParentKey].Issue, s))
             .ToList();
-        var current = withParent.Select(s => $"{s.ParentKey}_{s.Key}").ToHashSet(StringComparer.Ordinal);
-        List<string> removed = full ? [] : previous.WorkPackages.Where(id => !current.Contains(id)).ToList();
 
-        var file = SaveWorkbook(full, startedAt, previous.ExportedAt, workPackages, projects, removed);
-        // Sent before the state is saved: if the mail fails the next run exports these changes again.
+        var file = SaveWorkbook(full, startedAt, workPackages, projects);
         if (sendTo is not null)
         {
-            var html = FillEmailTemplate(emailTemplate, file, full, startedAt, previous.ExportedAt, workPackages.Count, removed.Count);
+            var html = FillEmailTemplate(emailTemplate, file, full, startedAt, workPackages.Count);
             ExchangeEmailService.SendHtmlWithAttachment(sendTo.ExportRecipient, Path.GetFileName(file), html, file, sendTo.AutodiscoverAddress);
             logger.LogInformation("Sent '{File}' to {Recipient}", Path.GetFileName(file), sendTo.ExportRecipient);
         }
 
-        await SaveStateAsync(previous, full, startedAt, workPackages, projects, current);
-        logger.LogInformation("Wrote '{File}': {WorkPackages} work package(s), {Removed} removed. Failed project issue(s): {Failed}.",
-            file, workPackages.Count, removed.Count, changed.Count(s => !projects.ContainsKey(s.ParentKey)));
+        logger.LogInformation("Wrote '{File}': {WorkPackages} work package(s). Failed project issue(s): {Failed}.",
+            file, workPackages.Count, selected.Count(s => !projects.ContainsKey(s.ParentKey)));
     }
 
-    private static string FillEmailTemplate(string template, string file, bool full, DateTime startedAt, DateTime? previousExportAt, int workPackages, int removed)
+    private static string FillEmailTemplate(string template, string file, bool full, DateTime startedAt, int workPackages)
     {
-        const string TimeFormat = "dd.MM.yyyy HH:mm:ss";
         return template
             .Replace("{{FileName}}", System.Net.WebUtility.HtmlEncode(Path.GetFileName(file)))
-            .Replace("{{Mode}}", full ? "Full" : "Incremental")
-            .Replace("{{ExportedAt}}", startedAt.ToString(TimeFormat))
-            .Replace("{{PreviousExportAt}}", !full && previousExportAt is DateTime previous ? previous.ToString(TimeFormat) : "-")
-            .Replace("{{WorkPackageCount}}", workPackages.ToString())
-            .Replace("{{RemovedCount}}", removed.ToString());
+            .Replace("{{Mode}}", full ? "Full" : "Active")
+            .Replace("{{ExportedAt}}", startedAt.ToString("dd.MM.yyyy HH:mm:ss"))
+            .Replace("{{WorkPackageCount}}", workPackages.ToString());
     }
 
     // Names and ids of the date and datetime fields; their changes go to the Changes sheet with the status.
@@ -133,10 +112,10 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    // Light search: only 'updated', batched so the key list stays within URL limits.
-    private async Task<Dictionary<string, DateTime>> ReadUpdateTimesAsync(List<string> projectKeys)
+    // Light search: only what decides whether a project goes in the file, batched so the key list stays within URL limits.
+    private async Task<Dictionary<string, ProjectActivity>> ReadProjectActivityAsync(List<string> projectKeys)
     {
-        Dictionary<string, DateTime> updated = new(StringComparer.Ordinal);
+        Dictionary<string, ProjectActivity> activity = new(StringComparer.Ordinal);
         foreach (var batch in projectKeys.Chunk(KeyBatchSize))
         {
             var jql = $"key in ({string.Join(", ", batch)})";
@@ -144,12 +123,17 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
             int total;
             do
             {
-                var page = await jiraClient.SearchPage(jql, "updated", expand: "", startAt, KeyBatchSize);
+                var page = await jiraClient.SearchPage(jql, "updated,status,resolutiondate", expand: "", startAt, KeyBatchSize);
                 total = page.Value<int>("total");
                 var issues = page["issues"] as JArray ?? [];
                 foreach (var issue in issues)
                 {
-                    updated[issue.Value<string>("key")] = issue["fields"]!.Value<DateTime>("updated");
+                    var fields = issue["fields"]!;
+                    activity[issue.Value<string>("key")] = new ProjectActivity(
+                        fields.Value<DateTime>("updated"),
+                        fields["status"]?.Value<string>("name"),
+                        fields["status"]?["statusCategory"]?.Value<string>("key"),
+                        fields.Value<DateTime?>("resolutiondate"));
                 }
 
                 if (issues.Count == 0)
@@ -161,13 +145,13 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
             } while (startAt < total);
         }
 
-        return updated;
+        return activity;
     }
 
     // From disk when the snapshot is as recent as Jira's 'updated', otherwise downloaded with its changelog.
-    // A project that fails is left out of this export and retried by the next one.
+    // A project that fails is left out of this file and retried by the next one.
     private async Task<Dictionary<string, ProjectSnapshot>> LoadProjectsAsync(
-        List<string> keys, Dictionary<string, DateTime> projectUpdated, HashSet<string> dateFields)
+        List<string> keys, Dictionary<string, ProjectActivity> activity, HashSet<string> dateFields)
     {
         Directory.CreateDirectory(Constants.ExportCacheDirectory);
         var customFields = JiraIssue.GetCustomFields();
@@ -177,7 +161,7 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         {
             var key = keys[i];
             var file = Path.Combine(Constants.ExportCacheDirectory, $"{key}.json");
-            var updated = projectUpdated[key];
+            var updated = activity[key].Updated;
             if (File.Exists(file))
             {
                 var cached = await JsonHelper.FromJsonAsync<ProjectSnapshot>(file);
@@ -235,8 +219,7 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
             .ToList();
     }
 
-    private string SaveWorkbook(bool full, DateTime startedAt, DateTime? previousExportAt, List<WorkPackage> workPackages,
-        Dictionary<string, ProjectSnapshot> projects, List<string> removed)
+    private string SaveWorkbook(bool full, DateTime startedAt, List<WorkPackage> workPackages, Dictionary<string, ProjectSnapshot> projects)
     {
         using var workbook = new XLWorkbook();
         var exportedProjects = workPackages.Select(w => w.ProjectTask.Key).Distinct(StringComparer.Ordinal).ToList();
@@ -245,21 +228,18 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         AddMetaSheet(workbook,
         [
             ("ExportedAt", startedAt.ToString("yyyy-MM-dd HH:mm:ss")),
-            ("Mode", full ? "Full" : "Incremental"),
-            ("PreviousExportAt", full ? "" : previousExportAt?.ToString("yyyy-MM-dd HH:mm:ss") ?? ""),
+            ("Mode", full ? "Full" : "Active"),
             ("ProjectQuery", settings.ProjectQuery),
             ("WorkPackages", workPackages.Count.ToString()),
             ("ProjectIssues", exportedProjects.Count.ToString()),
-            ("ChangeRows", changeRows.ToString()),
-            ("Removed", removed.Count.ToString())
+            ("ChangeRows", changeRows.ToString())
         ]);
         ExcelReportGenerator.AddReportSheet(workbook, workPackages);
         ExcelReportGenerator.AddRelationsSheet(workbook, ReportRelations.Build(workPackages), ChangeReportHtml.ToBrowseUrl(settings.BaseApiUrl));
         AddChangesSheet(workbook, exportedProjects.Select(k => (k, projects[k].Changes)));
-        AddRemovedSheet(workbook, removed);
 
         Directory.CreateDirectory(Constants.ExportDirectory);
-        var file = Path.Combine(Constants.ExportDirectory, $"projects-{startedAt:yyyyMMdd-HHmmss}-{(full ? "full" : "incremental")}.xlsx");
+        var file = Path.Combine(Constants.ExportDirectory, $"projects-{startedAt:yyyyMMdd-HHmmss}-{(full ? "full" : "active")}.xlsx");
         workbook.SaveAs(file);
         return file;
     }
@@ -302,20 +282,6 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
         sheet.SheetView.FreezeRows(1);
     }
 
-    // Work packages in the previous export that the query no longer returns (deleted, moved, or no longer
-    // visible to this account).
-    private static void AddRemovedSheet(XLWorkbook workbook, List<string> removed)
-    {
-        var sheet = workbook.Worksheets.Add("Removed");
-        WriteHeader(sheet, "ProjectKey", "ProposalScopingKey");
-        for (int i = 0; i < removed.Count; i++)
-        {
-            var parts = removed[i].Split('_', 2);
-            sheet.Cell(i + 2, 1).Value = parts[0];
-            sheet.Cell(i + 2, 2).Value = parts.Length > 1 ? parts[1] : "";
-        }
-    }
-
     private static void WriteHeader(IXLWorksheet sheet, params string[] headers)
     {
         for (int col = 0; col < headers.Length; col++)
@@ -325,31 +291,6 @@ public class JiraWorkbookExporter(ILoggerFactory loggerFactory, JiraSettings set
             cell.Style.Font.Bold = true;
             cell.Style.Fill.BackgroundColor = XLColor.LightGray;
         }
-    }
-
-    // Exported entries get their new times; the ones that failed keep the old ones and are retried next time.
-    private static async Task SaveStateAsync(ExportState previous, bool full, DateTime startedAt, List<WorkPackage> workPackages,
-        Dictionary<string, ProjectSnapshot> projects, HashSet<string> current)
-    {
-        var state = new ExportState
-        {
-            ExportedAt = startedAt,
-            Projects = full ? [] : new(previous.Projects),
-            Scopings = full ? [] : new(previous.Scopings),
-            WorkPackages = current.Order(StringComparer.Ordinal).ToList()
-        };
-        foreach (var workPackage in workPackages)
-        {
-            state.Projects[workPackage.ProjectTask.Key] = projects[workPackage.ProjectTask.Key].Updated;
-            state.Scopings[workPackage.ProposalScopingTask.Key] = workPackage.ProposalScopingTask.Updated;
-        }
-
-        await state.SaveAsJsonAsync(Constants.ExportStateFileName);
-    }
-
-    private static bool HasMoved(Dictionary<string, DateTime> known, string key, DateTime updated)
-    {
-        return !known.TryGetValue(key, out var previous) || HasMoved(previous, updated);
     }
 
     // Compared in UTC at second precision: one side has been through JSON, the other has not.
