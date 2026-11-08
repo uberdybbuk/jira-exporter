@@ -113,6 +113,11 @@ class Program
                     sendTo: args.Contains("--send-email") ? settings.Email : null);
                 break;
 
+            case "requests":
+                logger.LogInformation("Running: write the issues of the request query to one workbook");
+                await ExportRequests(loggerFactory, settings, args);
+                break;
+
             default:
                 Console.WriteLine("Usage: dotnet run -- <command>");
                 Console.WriteLine("Commands:");
@@ -126,6 +131,8 @@ class Program
                 Console.WriteLine("                    Open projects and the ones closed in the last 14 days; --full writes everything");
                 Console.WriteLine("                    --send-email mails the workbook to Email.To and Email.Cc");
                 Console.WriteLine("                    --delay-ms waits n ms before each Jira request (default 0); works with every command");
+                Console.WriteLine("  requests [--jql \"<query>\"] [--delay-ms <n>]");
+                Console.WriteLine("                    Write the issues of Jira.RequestQuery (or --jql) to one workbook in data/exports");
                 Console.WriteLine("  customfieldextractor <field>");
                 Console.WriteLine("                    List the distinct values a field takes across the project query");
                 Console.WriteLine("  dumpfields [--custom]");
@@ -134,6 +141,24 @@ class Program
         }
 
         Log.CloseAndFlush();
+    }
+
+    // --jql replaces Jira.RequestQuery for one run.
+    private static async Task ExportRequests(ILoggerFactory loggerFactory, AppSettings settings, string[] args)
+    {
+        var logger = loggerFactory.CreateLogger<Program>();
+        var jqlIndex = Array.IndexOf(args, "--jql");
+        var jql = jqlIndex >= 0 && jqlIndex + 1 < args.Length ? args[jqlIndex + 1] : settings.Jira.RequestQuery;
+
+        var exporter = new RequestExporter(loggerFactory, settings.Jira);
+        var problem = exporter.FindProblem(jql);
+        if (problem is not null)
+        {
+            logger.LogError("{Message}", problem);
+            return;
+        }
+
+        await exporter.ExportAsync(jql);
     }
 
     // Reads one field across the project query, for working out what it holds.

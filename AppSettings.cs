@@ -52,6 +52,7 @@ public class AppSettings
         target.Jira.Username = Pick(source.Jira.Username, target.Jira.Username);
         target.Jira.Password = Pick(source.Jira.Password, target.Jira.Password);
         target.Jira.ProjectQuery = Pick(source.Jira.ProjectQuery, target.Jira.ProjectQuery);
+        target.Jira.RequestQuery = Pick(source.Jira.RequestQuery, target.Jira.RequestQuery);
         target.Email.From = Pick(source.Email.From, target.Email.From);
         target.Email.To = Pick(source.Email.To, target.Email.To);
         target.Email.Cc = Pick(source.Email.Cc, target.Email.Cc);
@@ -74,6 +75,7 @@ public class AppSettings
         settings.Jira.Username = Env("JIRA_USERNAME") ?? settings.Jira.Username;
         settings.Jira.Password = Env("JIRA_PASSWORD") ?? settings.Jira.Password;
         settings.Jira.ProjectQuery = Env("JIRA_PROJECT_QUERY") ?? settings.Jira.ProjectQuery;
+        settings.Jira.RequestQuery = Env("JIRA_REQUEST_QUERY") ?? settings.Jira.RequestQuery;
         settings.Email.From = Env("EMAIL_FROM") ?? settings.Email.From;
         settings.Email.To = Env("EMAIL_TO") ?? settings.Email.To;
         settings.Email.Cc = Env("EMAIL_CC") ?? settings.Email.Cc;
@@ -118,6 +120,9 @@ public class JiraSettings
 
     // JQL selecting the scoping issues to export.
     public string ProjectQuery { get; set; }
+
+    // JQL selecting the request issues for the 'requests' command. Only that command needs it.
+    public string RequestQuery { get; set; }
 
     // Logical field name to the real Jira field, e.g. "estimation": "customfield_XXXXX".
     // Custom field IDs differ between installations, so they are configured rather than hardcoded.

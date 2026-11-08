@@ -47,6 +47,7 @@ dotnet run -- fetch
 | `report` | Builds Excel and JSON reports from previously fetched data |
 | `all` | `fetch`, then `report`, then emails the report |
 | `checkforupdates` | Emails what changed since the last snapshot |
+| `requests` | Writes the issues of `Jira.RequestQuery` to one workbook (see below) |
 | `export` | Writes everything taken from Jira to one workbook for Horizon; active projects by default, `--full` for everything, `--send-email` to mail it (see below) |
 
 `fetch` and `report` run anywhere. `all` and `checkforupdates` send mail through
@@ -98,6 +99,19 @@ project's `Changes` rows wholesale. A project missing from the file is not touch
 
 Downloaded project issues are kept in `data/export-cache/`; a rerun reads them from there while their `updated` time
 stays the same, so a rerun only downloads what changed.
+
+## Request export
+
+`dotnet run -- requests` writes the issues of `Jira.RequestQuery` to `data/exports/requests-<time>.xlsx`, one row per
+issue, on one sheet. `--jql "<query>"` runs another query once instead. The query returns the request issues
+themselves, so there are no work packages here.
+
+The columns are fixed: `T`, `Key`, `Summary`, `Assignee`, `P`, `Status`, `Resolution`, `Project`, `Created`, `Team`,
+`T-Shirt Size`, `Category`, `Level-3 Team`, `Company`, `Access Group`, `Salesforce Budget`, `Estimation Details`.
+The custom ones need an entry in `Jira.Fields` (`team`, `tShirtSize`, `category`, `level3Team`, `company`,
+`accessGroup`, `salesForceBudget`, `estimationDetails`), otherwise the command says which is missing and stops.
+Multi-value fields are joined with `, `. `Key` links to the issue, `Created` is a date cell and `Salesforce Budget` a
+number.
 
 ## Field mapping
 
