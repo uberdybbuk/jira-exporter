@@ -5,9 +5,12 @@ using Newtonsoft.Json.Linq;
 
 namespace FourArc.JiraExporter;
 
-// Writes the issues of Jira.RequestQuery to one workbook, one row per issue, with the columns of the Jira issue
-// navigator view the query is used with. Unlike 'export' there are no work packages here: the query returns the
-// request issues themselves.
+// Writes the issues of Jira.RequestQuery to one workbook. Unlike 'export' there are no work packages here: the query
+// returns the request issues themselves.
+//
+// Requests: one row per issue, with the columns of the Jira issue navigator view the query is used with, plus the
+// estimation total. Estimates: one row per person per issue, read from Estimation Details. By Person: a pivot table
+// over Estimates, so per-person totals follow whatever filter is set in Excel.
 public class RequestExporter(ILoggerFactory loggerFactory, JiraSettings settings)
 {
     private const int PageSize = 500;
@@ -43,6 +46,9 @@ public class RequestExporter(ILoggerFactory loggerFactory, JiraSettings settings
         new("Salesforce Budget", "salesForceBudget", ColumnKind.Number),
         new("Estimation Details", "estimationDetails"),
     ];
+
+    // Request columns repeated on every Estimates row, so the pivot can filter by them.
+    private static readonly string[] s_estimateContextColumns = ["Project", "Company", "Team", "T-Shirt Size", "Status"];
 
     // Custom fields have no fixed id, so they must be mapped; an unmapped one would silently come back empty.
     private static readonly string[] s_customFields =
@@ -107,18 +113,35 @@ public class RequestExporter(ILoggerFactory loggerFactory, JiraSettings settings
         return issues;
     }
 
-    private void SaveWorkbook(string file, List<JObject> issues, string browseUrl)
+    // Internal so it can be run on sample issues without Jira.
+    internal void SaveWorkbook(string file, List<JObject> issues, string browseUrl)
     {
-        using var workbook = new XLWorkbook();
-        var sheet = workbook.Worksheets.Add("Requests");
+        var estimations = issues
+            .Select(i => EstimationDetails.Parse(FieldText(i, settings.ResolveField("estimationDetails"))))
+            .ToList();
 
-        for (int col = 0; col < s_columns.Length; col++)
+        using var workbook = new XLWorkbook();
+        var requests = AddRequestsSheet(workbook, issues, estimations, browseUrl);
+        var estimates = AddEstimatesSheet(workbook, requests, estimations);
+        if (estimates is not null)
         {
-            var cell = sheet.Cell(1, col + 1);
-            cell.Value = s_columns[col].Header;
-            cell.Style.Font.Bold = true;
-            cell.Style.Fill.BackgroundColor = XLColor.LightGray;
+            AddByPersonSheet(workbook, estimates);
         }
+
+        foreach (var (issue, estimation) in issues.Zip(estimations).Where(p => p.Second.Problems.Count > 0))
+        {
+            logger.LogWarning("{Key}: Estimation Details line(s) not read as 'name : man-days': {Lines}",
+                issue.Value<string>("key"), string.Join(" | ", estimation.Problems));
+        }
+
+        workbook.SaveAs(file);
+    }
+
+    private IXLWorksheet AddRequestsSheet(XLWorkbook workbook, List<JObject> issues, List<EstimationDetails> estimations, string browseUrl)
+    {
+        var sheet = workbook.Worksheets.Add("Requests");
+        string[] headers = [.. s_columns.Select(c => c.Header), "Estimation Total", "Estimation Problems"];
+        WriteHeader(sheet, headers);
 
         for (int row = 0; row < issues.Count; row++)
         {
@@ -126,8 +149,111 @@ public class RequestExporter(ILoggerFactory loggerFactory, JiraSettings settings
             {
                 WriteCell(sheet.Cell(row + 2, col + 1), issues[row], s_columns[col], browseUrl);
             }
+
+            var estimation = estimations[row];
+            if (estimation.Estimates.Count > 0)
+            {
+                sheet.Cell(row + 2, s_columns.Length + 1).Value = estimation.Total;
+            }
+
+            if (estimation.Problems.Count > 0)
+            {
+                sheet.Cell(row + 2, s_columns.Length + 2).Value = string.Join("\n", estimation.Problems);
+            }
         }
 
+        FinishSheet(sheet);
+        return sheet;
+    }
+
+    // One row per person per request. Returns null when no request has an estimate, since a pivot needs data rows.
+    private static IXLTable AddEstimatesSheet(XLWorkbook workbook, IXLWorksheet requests, List<EstimationDetails> estimations)
+    {
+        if (estimations.All(e => e.Estimates.Count == 0))
+        {
+            return null;
+        }
+
+        var sheet = workbook.Worksheets.Add("Estimates");
+        string[] headers = ["Key", "Person", "Man-Days", "Created", "Created Year", "Created Month", .. s_estimateContextColumns];
+        WriteHeader(sheet, headers);
+
+        var keyColumn = RequestColumn("Key");
+        var createdColumn = RequestColumn("Created");
+        var contextColumns = s_estimateContextColumns.Select(RequestColumn).ToArray();
+
+        int row = 2;
+        for (int i = 0; i < estimations.Count; i++)
+        {
+            var requestRow = requests.Row(i + 2);
+            var created = requestRow.Cell(createdColumn).Value;
+
+            foreach (var estimate in estimations[i].Estimates)
+            {
+                requestRow.Cell(keyColumn).CopyTo(sheet.Cell(row, 1));
+                sheet.Cell(row, 2).Value = estimate.Person;
+                sheet.Cell(row, 3).Value = estimate.ManDays;
+
+                // Year and month as their own columns: a pivot filter on the date itself lists every single day.
+                if (created.IsDateTime)
+                {
+                    var date = created.GetDateTime();
+                    sheet.Cell(row, 4).Value = date.Date;
+                    sheet.Cell(row, 4).Style.DateFormat.Format = "yyyy-MM-dd";
+                    sheet.Cell(row, 5).Value = date.Year;
+                    sheet.Cell(row, 6).Value = date.ToString("yyyy-MM", CultureInfo.InvariantCulture);
+                }
+
+                for (int c = 0; c < contextColumns.Length; c++)
+                {
+                    sheet.Cell(row, 7 + c).Value = requestRow.Cell(contextColumns[c]).Value;
+                }
+
+                row++;
+            }
+        }
+
+        var table = sheet.Range(1, 1, row - 1, headers.Length).CreateTable("EstimatesTable");
+        table.Theme = XLTableTheme.None;
+        FinishSheet(sheet);
+        return table;
+    }
+
+    // Total man-days and number of requests per person. Year, month, company and the rest are page
+    // filters; Excel recalculates the totals when one is set.
+    private static void AddByPersonSheet(XLWorkbook workbook, IXLTable estimates)
+    {
+        var sheet = workbook.Worksheets.Add("By Person");
+        var pivot = sheet.PivotTables.Add("ByPerson", sheet.Cell(3, 1), estimates);
+
+        pivot.RowLabels.Add("Person");
+        pivot.Values.Add("Man-Days", "Total Man-Days").SetSummaryFormula(XLPivotSummary.Sum);
+        pivot.Values.Add("Key", "Requests").SetSummaryFormula(XLPivotSummary.Count);
+
+        string[] filters = ["Created Year", "Created Month", .. s_estimateContextColumns];
+        foreach (var filter in filters)
+        {
+            pivot.ReportFilters.Add(filter);
+        }
+
+        workbook.Worksheet("By Person").Position = 1;
+    }
+
+    private static int RequestColumn(string header) => Array.FindIndex(s_columns, c => c.Header == header) + 1;
+
+    private static void WriteHeader(IXLWorksheet sheet, string[] headers)
+    {
+        for (int col = 0; col < headers.Length; col++)
+        {
+            var cell = sheet.Cell(1, col + 1);
+            cell.Value = headers[col];
+            cell.Style.Font.Bold = true;
+            cell.Style.Fill.BackgroundColor = XLColor.LightGray;
+        }
+    }
+
+    private static void FinishSheet(IXLWorksheet sheet)
+    {
         sheet.Columns().AdjustToContents();
         foreach (var column in sheet.ColumnsUsed().Where(c => c.Width > MaxColumnWidth))
         {
@@ -136,9 +262,18 @@ public class RequestExporter(ILoggerFactory loggerFactory, JiraSettings settings
         }
 
         sheet.Rows().Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
-        sheet.RangeUsed()?.SetAutoFilter();
+        if (!sheet.Tables.Any())
+        {
+            sheet.RangeUsed()?.SetAutoFilter();
+        }
+
         sheet.SheetView.FreezeRows(1);
-        workbook.SaveAs(file);
+    }
+
+    private static string FieldText(JObject issue, string field)
+    {
+        var value = issue["fields"]?[field];
+        return value is null || value.Type == JTokenType.Null ? "" : ToText(value);
     }
 
     private void WriteCell(IXLCell cell, JObject issue, Column column, string browseUrl)

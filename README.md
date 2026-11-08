@@ -102,13 +102,21 @@ stays the same, so a rerun only downloads what changed.
 
 ## Request export
 
-`dotnet run -- requests` writes the issues of `Jira.RequestQuery` to `data/exports/requests-<time>.xlsx`, one row per
-issue, on one sheet. `--jql "<query>"` runs another query once instead. The query returns the request issues
-themselves, so there are no work packages here.
+`dotnet run -- requests` writes the issues of `Jira.RequestQuery` to `data/exports/requests-<time>.xlsx`. `--jql
+"<query>"` runs another query once instead. The query returns the request issues themselves, so there are no work
+packages here.
 
-The columns are fixed: `T`, `Key`, `Summary`, `Assignee`, `P`, `Status`, `Resolution`, `Project`, `Created`, `Team`,
-`T-Shirt Size`, `Category`, `Level-3 Team`, `Company`, `Access Group`, `Salesforce Budget`, `Estimation Details`.
-The custom ones need an entry in `Jira.Fields` (`team`, `tShirtSize`, `category`, `level3Team`, `company`,
+| Sheet | Content |
+|---|---|
+| `By Person` | Pivot table over `Estimates`: total man-days and number of requests per person. Year, month, project, company, team, T-shirt size and status are filters; Excel fills the table when the file is opened |
+| `Requests` | One row per issue: `T`, `Key`, `Summary`, `Assignee`, `P`, `Status`, `Resolution`, `Project`, `Created`, `Team`, `T-Shirt Size`, `Category`, `Level-3 Team`, `Company`, `Access Group`, `Salesforce Budget`, `Estimation Details`, then `Estimation Total` and `Estimation Problems` |
+| `Estimates` | One row per person per issue, read from `Estimation Details`: `Key`, `Person`, `Man-Days`, `Created`, `Created Year`, `Created Month` and the request's project, company, team, T-shirt size and status |
+
+`Estimation Details` holds one `Person : man-days` line per estimate. The person is kept as written. A person on
+several lines of the same issue is summed, and a zero estimate is left out. A line that does not read as a name and a
+whole number is not counted: it goes to `Estimation Problems` on the `Requests` row and to the log.
+
+The custom fields need an entry in `Jira.Fields` (`team`, `tShirtSize`, `category`, `level3Team`, `company`,
 `accessGroup`, `salesForceBudget`, `estimationDetails`), otherwise the command says which is missing and stops.
 Multi-value fields are joined with `, `. `Key` links to the issue, `Created` is a date cell and `Salesforce Budget` a
 number.
